@@ -33,11 +33,13 @@ jobs:
             target: ppc64le
     steps:
       - uses: actions/checkout@v4
-      - name: Set working directory
-        run: cd hdc-py
+      
+      # 移除无效的 cd 步骤
+
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -45,11 +47,15 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
+          # 👇 指定工作目录
+          working-directory: hdc-py
+
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.platform.target }}
-          path: dist
+          # 注意：maturin 在 hdc-py 下运行，dist 会生成在 hdc-py/dist
+          path: hdc-py/dist
 
   musllinux:
     runs-on: ${{ matrix.platform.runner }}
@@ -66,11 +72,11 @@ jobs:
             target: armv7
     steps:
       - uses: actions/checkout@v4
-      - name: Set working directory
-        run: cd hdc-py
+
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -78,11 +84,15 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
+          # 👇 指定工作目录
+          working-directory: hdc-py
+
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
-          path: dist
+          # dist 位于 hdc-py/dist
+          path: hdc-py/dist
 
   windows:
     runs-on: ${{ matrix.platform.runner }}
@@ -95,23 +105,27 @@ jobs:
             target: x86
     steps:
       - uses: actions/checkout@v4
-      - name: Set working directory
-        run: cd hdc-py
+
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
           architecture: ${{ matrix.platform.target }}
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          # 👇 指定工作目录
+          working-directory: hdc-py
+
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-windows-${{ matrix.platform.target }}
-          path: dist
+          # dist 位于 hdc-py/dist
+          path: hdc-py/dist
 
   macos:
     runs-on: ${{ matrix.platform.runner }}
@@ -124,55 +138,64 @@ jobs:
             target: aarch64
     steps:
       - uses: actions/checkout@v4
-      - name: Set working directory
-        run: cd hdc-py
+
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          # 👇 指定工作目录
+          working-directory: hdc-py
+
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-macos-${{ matrix.platform.target }}
-          path: dist
+          # dist 位于 hdc-py/dist
+          path: hdc-py/dist
 
   sdist:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set working directory
-        run: cd hdc-py
+
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
+          # 👇 指定工作目录
+          working-directory: hdc-py
+
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
           name: wheels-sdist
-          path: dist
+          # dist 位于 hdc-py/dist
+          path: hdc-py/dist
 
   release:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [linux, musllinux, windows, macos, sdist]
+    needs: [ linux, musllinux, windows, macos, sdist ]
     permissions:
       id-token: write
       contents: write
       attestations: write
     steps:
       - uses: actions/download-artifact@v4
+
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: 'wheels-*/*'
+
       - name: Publish to PyPI
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         uses: PyO3/maturin-action@v1
@@ -181,4 +204,3 @@ jobs:
         with:
           command: upload
           args: --non-interactive --skip-existing wheels-*/*
-
