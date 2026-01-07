@@ -21,11 +21,11 @@ jobs:
 
       # 3. (可选) 可以在发布前先跑一遍测试，确保发布的版本是绿色的
       - name: Run tests
-        run: cargo test
+        run: cd hdc-rs && cargo test
 
       # 4. 执行发布
       - name: Publish to Crates.io
         env:
           # 注意：这里的名字必须和你 GitHub Settings 里设置的 Secret 名字一致
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
-        run: cargo publish
+        run: cd hdc-rs && cargo publish
