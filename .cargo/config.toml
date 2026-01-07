@@ -1,0 +1,2 @@
+[env]
+VIRTUAL_ENV = {value= ".venv", relative=true }
