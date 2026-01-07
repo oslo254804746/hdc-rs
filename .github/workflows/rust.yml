@@ -1,0 +1,31 @@
+name: Publish to Crates.io
+
+on:
+  push:
+    # 仅当推送以 'v' 开头的 tag 时触发 (例如 v0.1.0)
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    name: Publish Cargo Crates
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 检出代码
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      # 2. 安装 Rust 工具链 (推荐使用 dtolnay/rust-toolchain，它比官方更稳定且功能更多)
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # 3. (可选) 可以在发布前先跑一遍测试，确保发布的版本是绿色的
+      - name: Run tests
+        run: cargo test
+
+      # 4. 执行发布
+      - name: Publish to Crates.io
+        env:
+          # 注意：这里的名字必须和你 GitHub Settings 里设置的 Secret 名字一致
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        run: cargo publish
