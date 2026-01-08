@@ -1,4 +1,4 @@
-# HDC-RS Python 绑定
+# HDC-RS Python 绑定 (hdc-rs-py)
 
 这是 hdc-rs 的 Python 绑定，提供了 HarmonyOS Device Connector (HDC) 客户端的 Python 接口。
 
@@ -9,20 +9,19 @@
 首先确保已安装 Rust 和 Python 3.8+：
 
 ```bash
-# 安装 maturin
+# 从 PyPI 安装
+pip install hdc-rs-py
+
+# 或从源码构建
 pip install maturin
-
-# 进入 pyo3 目录
-cd pyo3
-
-# 开发模式安装（推荐用于开发）
+cd hdc-py
 maturin develop
 
-# 或者构建 wheel 包
+# 构建 wheel 包
 maturin build --release
 
 # 安装构建好的 wheel
-pip install target/wheels/hdc_rs-*.whl
+pip install target/wheels/hdc_rs_py-*.whl
 ```
 
 ## 快速开始

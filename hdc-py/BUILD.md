@@ -8,20 +8,20 @@
 
 **Windows PowerShell:**
 ```powershell
-cd pyo3
+cd hdc-py
 .\build.ps1
 ```
 
 **Linux/macOS:**
 ```bash
-cd pyo3
+cd hdc-py
 chmod +x build.sh
 ./build.sh
 ```
 
 或者手动构建：
 ```bash
-cd pyo3
+cd hdc-py
 pip install maturin
 maturin develop --release
 ```

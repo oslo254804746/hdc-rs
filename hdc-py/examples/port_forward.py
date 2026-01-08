@@ -2,7 +2,7 @@
 端口转发示例
 """
 
-from hdc_rs import HdcClient
+from hdc_rs_py import HdcClient
 
 
 def main():

@@ -2,7 +2,7 @@
 文件传输示例
 """
 
-from hdc_rs import HdcClient
+from hdc_rs_py import HdcClient
 import os
 
 

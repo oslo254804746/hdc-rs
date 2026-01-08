@@ -1,6 +1,12 @@
-# HDC-RS Python 快速入门
+# HDC-RS Python 快速入门 (hdc-rs-py)
 
 欢迎使用 HDC-RS 的 Python 绑定！本指南将帮助您快速开始使用。
+
+## 从 PyPI 安装（推荐）
+
+```bash
+pip install hdc-rs-py
+```
 
 ## 前置要求
 
@@ -15,13 +21,13 @@
 
 **Windows (PowerShell):**
 ```powershell
-cd pyo3
+cd hdc-py
 .\build.ps1
 ```
 
 **Linux/macOS:**
 ```bash
-cd pyo3
+cd hdc-py
 chmod +x build.sh
 ./build.sh
 ```
@@ -32,8 +38,8 @@ chmod +x build.sh
 # 安装 maturin
 pip install maturin
 
-# 进入 pyo3 目录
-cd pyo3
+# 进入 hdc-py 目录
+cd hdc-py
 
 # 开发模式构建（推荐用于开发和测试）
 maturin develop
@@ -45,13 +51,13 @@ maturin develop --release
 ### 方法 3: 构建 wheel 包
 
 ```bash
-cd pyo3
+cd hdc-py
 
 # 构建 wheel 包
 maturin build --release
 
 # 安装生成的 wheel
-pip install target/wheels/hdc_rs-*.whl
+pip install target/wheels/hdc_rs_py-*.whl
 ```
 
 ## 验证安装

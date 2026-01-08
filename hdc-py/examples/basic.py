@@ -2,7 +2,7 @@
 基础使用示例 - 列出设备并执行命令
 """
 
-from hdc_rs import HdcClient
+from hdc_rs_py import HdcClient
 
 
 def main():

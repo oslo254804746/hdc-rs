@@ -298,7 +298,7 @@ impl HdcClient {
 
 /// HDC Python module - HarmonyOS Device Connector client library
 #[pymodule]
-fn hdc_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn hdc_rs_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<HdcClient>()?;
     Ok(())
 }

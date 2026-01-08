@@ -2,7 +2,7 @@
 完整的使用示例 - 展示所有主要功能
 """
 
-from hdc_rs import HdcClient
+from hdc_rs_py import HdcClient
 import os
 import time
 

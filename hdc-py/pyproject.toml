@@ -3,7 +3,7 @@ requires = ["maturin>=1.9,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "hdc-py"
+name = "hdc-rs-py"
 version = "0.1.0"
 description = "Python bindings for HarmonyOS Device Connector (HDC) client library"
 readme = "../README.md"

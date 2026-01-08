@@ -1,5 +1,5 @@
 [package]
-name = "hdc-py"
+name = "hdc-rs-py"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ description = "Python bindings for HarmonyOS Device Connector (HDC)"
 publish = false  # Python bindings are published via PyPI
 
 [lib]
-name = "hdc_rs"  # Python module name
+name = "hdc_rs_py"  # Python module name
 crate-type = ["cdylib"]
 
 [dependencies]
