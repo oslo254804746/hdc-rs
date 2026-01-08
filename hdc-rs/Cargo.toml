@@ -33,7 +33,7 @@ path = "src/lib.rs"
 # For crates.io publishing
 [[example]]
 name = "list_devices"
-path = "../examples/list_devices.rs"
+path = "examples/list_devices.rs"
 required-features = []
 
 

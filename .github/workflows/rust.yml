@@ -2,7 +2,6 @@ name: Publish to Crates.io
 
 on:
   push:
-    # 仅当推送以 'v' 开头的 tag 时触发 (例如 v0.1.0)
     tags:
       - 'v*'
 
@@ -12,9 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./hdc-rs
+        working-directory: hdc-rs
     steps:
-      # 1. 检出代码
       - name: Checkout sources
         uses: actions/checkout@v4
 

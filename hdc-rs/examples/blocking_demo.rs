@@ -2,6 +2,11 @@
 //!
 //! This demonstrates how to use the blocking (synchronous) API,
 //! which is ideal for FFI bindings like PyO3 or synchronous contexts.
+//!
+//! **Note**: HDC server may close the connection after each command when
+//! connected to a specific device. This example demonstrates the recommended
+//! pattern of reconnecting to the device before each operation to ensure
+//! reliability.
 
 use hdc_rs::blocking::HdcClient;
 use hdc_rs::forward::ForwardNode;
@@ -55,13 +60,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let output = client.shell("uname -a")?;
         println!("Output:\n{}\n", output.trim());
 
-        // Get system property
+        // Reconnect to device before next command (HDC server may close connection)
         println!("Getting system property: ro.product.model");
+        client.connect_device(device_id)?;
         let output = client.shell("param get ro.product.model")?;
         println!("Device model: {}\n", output.trim());
 
-        // Create port forward
+        // Reconnect before port forwarding
         println!("Setting up port forwarding (local:8080 -> device:8080)");
+        client.connect_device(device_id)?;
         let local = ForwardNode::Tcp(8080);
         let remote = ForwardNode::Tcp(8080);
         let task_str = format!(
@@ -73,8 +80,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(result) => {
                 println!("✓ Forward created: {}\n", result);
 
-                // Clean up
+                // Reconnect and clean up
                 println!("Removing port forward...");
+                client.connect_device(device_id)?;
                 client.fport_remove(&task_str)?;
                 println!("✓ Forward removed\n");
             }
@@ -83,8 +91,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Get device logs (first 10 lines)
+        // Reconnect for hilog
         println!("Getting device logs (hilog)...");
+        client.connect_device(device_id)?;
         let logs = client.hilog(None)?;
         let lines: Vec<&str> = logs.lines().take(10).collect();
         println!("First 10 log lines:");
@@ -132,16 +141,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "clear" => {
                     print!("\x1B[2J\x1B[1;1H");
                 }
-                cmd => match client.shell(cmd) {
-                    Ok(output) => {
-                        if !output.trim().is_empty() {
-                            print!("{}", output);
+                cmd => {
+                    // Reconnect before each shell command
+                    if let Err(e) = client.connect_device(device_id) {
+                        eprintln!("Error reconnecting: {}", e);
+                        continue;
+                    }
+                    match client.shell(cmd) {
+                        Ok(output) => {
+                            if !output.trim().is_empty() {
+                                print!("{}", output);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
                         }
                     }
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
-                    }
-                },
+                }
             }
         }
     }

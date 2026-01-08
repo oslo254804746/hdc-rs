@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "hdc-rs",
-    "hdc-py"
+    "hdc-rs-py"
 ]
 
 # Shared package metadata

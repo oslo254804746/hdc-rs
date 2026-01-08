@@ -136,15 +136,16 @@ impl HdcClient {
         if !self.is_connected() {
             return Err(HdcError::NotConnected);
         }
+        if let Some(ref mut tcp_stream) = self.stream {
+            debug!("Sending command: {}", command);
 
-        let stream = self.stream.as_mut().unwrap();
-        debug!("Sending command: {}", command);
+            // For simple commands, just send the command string
+            let cmd_bytes = command.as_bytes();
+            self.codec.write_packet(tcp_stream, cmd_bytes).await?;
 
-        // For simple commands, just send the command string
-        let cmd_bytes = command.as_bytes();
-        self.codec.write_packet(stream, cmd_bytes).await?;
-
-        Ok(())
+            return Ok(());
+        }
+        Err(HdcError::NotConnected)
     }
 
     /// Read response from server
@@ -162,6 +163,10 @@ impl HdcClient {
     /// Read response as string
     pub async fn read_response_string(&mut self) -> Result<String> {
         let data = self.read_response().await?;
+
+        if data.is_empty() {
+            return Ok(String::new());
+        }
 
         // Check if there's a command prefix (2 bytes)
         if data.len() >= 2 {
@@ -182,8 +187,14 @@ impl HdcClient {
     /// executed on that device (the device ID is set in the channel's connectKey
     /// during handshake). Otherwise, HDC server will return an error asking
     /// to specify a device.
+    ///
+    /// Note: Each shell command uses up the current channel. After execution,
+    /// the connection is automatically re-established if a device was connected.
     pub async fn shell(&mut self, cmd: &str) -> Result<String> {
         info!("Executing shell command: {}", cmd);
+
+        // Save the current connect key before executing
+        let device_id = self.connect_key.clone();
 
         // Command format is just "shell <cmd>"
         // Device targeting is done via the connectKey in handshake, not via -t parameter
@@ -191,44 +202,32 @@ impl HdcClient {
 
         self.send_command(&full_cmd).await?;
 
-        let mut output = String::new();
+        // For shell commands, HDC server sends a single response packet with raw output data
+        // No command code prefix, just the plain output
+        let output = match timeout(Duration::from_secs(5), self.read_response()).await {
+            Ok(Ok(data)) => {
+                debug!("Shell response: {} bytes", data.len());
+                String::from_utf8_lossy(&data).to_string()
+            }
+            Ok(Err(e)) => {
+                debug!("Error reading shell response: {}", e);
+                return Err(e);
+            }
+            Err(_) => {
+                warn!("Timeout reading shell response");
+                return Err(HdcError::Timeout);
+            }
+        };
 
-        // Read responses until we get an empty or finish marker
-        loop {
-            match timeout(Duration::from_secs(5), self.read_response_string()).await {
-                Ok(Ok(resp)) => {
-                    if resp.is_empty() {
-                        break;
-                    }
-                    output.push_str(&resp);
-
-                    // Check if this looks like the end of output
-                    // HDC may send multiple packets for long output
-                    if resp.ends_with('\n') || resp.ends_with('\0') {
-                        // Try to read one more packet with short timeout
-                        match timeout(Duration::from_millis(100), self.read_response()).await {
-                            Ok(Ok(data)) if !data.is_empty() => {
-                                // More data available
-                                if data.len() >= 2 {
-                                    let s = String::from_utf8_lossy(&data[2..]);
-                                    output.push_str(&s);
-                                } else {
-                                    output.push_str(&String::from_utf8_lossy(&data));
-                                }
-                            }
-                            _ => break, // No more data or timeout
-                        }
-                    }
-                }
-                Ok(Err(e)) => return Err(e),
-                Err(_) => {
-                    warn!("Timeout reading shell response");
-                    break;
-                }
+        // Shell command consumes the channel - reconnect if we had a device
+        if let Some(device) = device_id {
+            debug!("Reconnecting to device after shell command");
+            if let Err(e) = self.connect_device(&device).await {
+                warn!("Failed to reconnect after shell: {}", e);
+                // Don't fail the shell command itself, just log the warning
             }
         }
 
-        debug!("Shell command output: {} bytes", output.len());
         Ok(output)
     }
 
@@ -252,6 +251,23 @@ impl HdcClient {
         info!("Found {} device(s)", devices.len());
         Ok(devices)
     }
+
+    // pub async fn get_device_stream(&self, device_id: &str) -> Result<HdcClient>{
+    //     let stream = timeout(DEFAULT_TIMEOUT, TcpStream::connect(&self.address))
+    //         .await
+    //         .map_err(|_| HdcError::Timeout)?
+    //         .map_err(HdcError::Io)?;
+    //     let mut  client = HdcClient{
+    //         stream: Some(stream),
+    //         address: self.address.clone(),
+    //         codec: PacketCodec::new(),
+    //         channel_id: 0,
+    //         handshake_ok: false,
+    //         connect_key: None,
+    //     };
+    //     client.perform_handshake(Some(device_id)).await?;
+    //     Ok(client)
+    // }
 
     /// Connect to a specific device
     ///
