@@ -7,7 +7,7 @@ use std::io::{self, Write};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt()
-        .with_env_filter("hdc_rs=info")
+        .with_env_filter("hdc_rs=debug")
         .init();
 
     println!("HDC Rust Client - Simple Shell Example");
@@ -62,14 +62,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Command 1: Get device info
     println!("1. Getting device properties:");
-    match client.shell("getprop ro.product.model").await {
+    match client.shell("param get const.product.name").await {
         Ok(output) => println!("   Device model: {}", output.trim()),
         Err(e) => println!("   Error: {}", e),
     }
 
     // Command 2: List directory
     println!("\n2. Listing /data directory:");
-    match client.shell("ls -la /data").await {
+    match client.shell("ls -allh /data/local/tmp").await {
         Ok(output) => {
             for line in output.lines().take(10) {
                 println!("   {}", line);

@@ -313,6 +313,85 @@ impl HdcClient {
     pub fn wait_for_device(&mut self) -> Result<String> {
         self.runtime.block_on(self.inner.wait_for_device())
     }
+
+    /// Stream device logs (hilog) with callback
+    ///
+    /// This method continuously streams logs from the device and calls the callback
+    /// function for each log chunk received. The callback should return `true` to
+    /// continue streaming or `false` to stop.
+    ///
+    /// # Arguments
+    /// * `args` - Optional hilog command arguments (e.g., "-t MyTag" for filtering)
+    /// * `callback` - Function called for each log chunk. Return `true` to continue, `false` to stop.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hdc_rs::blocking::HdcClient;
+    ///
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
+    /// let devices = client.list_targets()?;
+    /// client.connect_device(&devices[0])?;
+    ///
+    /// // Stream all logs
+    /// client.hilog_stream(None, |log_chunk| {
+    ///     print!("{}", log_chunk);
+    ///     true // Continue streaming
+    /// })?;
+    ///
+    /// // Stream with filter
+    /// client.hilog_stream(Some("-t MyTag"), |log_chunk| {
+    ///     print!("{}", log_chunk);
+    ///     true
+    /// })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn hilog_stream<F>(&mut self, args: Option<&str>, callback: F) -> Result<()>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.runtime
+            .block_on(self.inner.hilog_stream(args, callback))
+    }
+
+    /// Monitor device list changes with callback
+    ///
+    /// This function continuously polls the device list and calls the callback
+    /// when changes are detected. The callback should return `true` to continue
+    /// monitoring or `false` to stop.
+    ///
+    /// Note: HDC doesn't have a native "track-devices" command like adb,
+    /// so this implementation uses polling to detect changes.
+    ///
+    /// # Arguments
+    /// * `interval` - Polling interval in seconds (recommended: 1-3 seconds)
+    /// * `callback` - Function called when device list changes. Return `true` to continue, `false` to stop.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hdc_rs::blocking::HdcClient;
+    ///
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
+    ///
+    /// // Monitor device changes every 2 seconds
+    /// client.monitor_devices(2, |devices| {
+    ///     println!("Device list changed:");
+    ///     for device in devices {
+    ///         println!("  - {}", device);
+    ///     }
+    ///     true // Continue monitoring
+    /// })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn monitor_devices<F>(&mut self, interval_secs: u64, callback: F) -> Result<()>
+    where
+        F: FnMut(&[String]) -> bool,
+    {
+        let interval = std::time::Duration::from_secs(interval_secs);
+        self.runtime
+            .block_on(self.inner.monitor_devices(interval, callback))
+    }
 }
 
 #[cfg(test)]

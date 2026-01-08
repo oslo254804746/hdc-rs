@@ -62,9 +62,9 @@ impl PacketCodec {
         let packet_len = u32::from_be_bytes(len_buf) as usize;
 
         if packet_len == 0 {
-            return Err(HdcError::Protocol(
-                "Received zero-length packet".to_string(),
-            ));
+            // Empty packet - return empty vec instead of error
+            debug!("Received zero-length packet");
+            return Ok(Vec::new());
         }
 
         if packet_len > MAX_PACKET_SIZE {
