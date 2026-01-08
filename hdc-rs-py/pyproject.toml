@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "hdc-rs-py"
-version = "0.1.0"
+version = "0.1.2"
 description = "Python bindings for HarmonyOS Device Connector (HDC) client library"
 readme = "../README.md"
 requires-python = ">=3.8"
