@@ -178,7 +178,7 @@ def main():
         ("4", "Monitor with auto-action", demo_monitor_with_auto_action),
     ]
     
-    print("HDC-PY Streaming Features Demo")
+    print("HDC-RS-PY Streaming Features Demo")
     print("=" * 50)
     print("\nAvailable demos:")
     for num, desc, _ in demos:

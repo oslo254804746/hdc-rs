@@ -37,7 +37,7 @@ impl HdcClient {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn connect(addr: &str) -> Result<Self> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
+        let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(crate::HdcError::Io)?;

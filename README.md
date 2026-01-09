@@ -249,7 +249,7 @@ hdc-rs/
 │   │       ├── command.rs   # Command builders
 │   │       └── channel.rs   # Channel management
 │   └── Cargo.toml
-├── hdc-py/              # Python bindings (PyO3)
+├── hdc-rs-py/           # Python bindings (PyO3)
 │   ├── src/lib.rs
 │   └── Cargo.toml
 ├── examples/            # Usage examples
@@ -310,12 +310,12 @@ Client                           Server
 
 ## 🐍 Python Bindings
 
-This project includes Python bindings built with PyO3. See [`hdc-py/README.md`](hdc-py/README.md) for complete documentation.
+This project includes Python bindings built with PyO3. See [`hdc-rs-py/README.md`](hdc-rs-py/README.md) for complete documentation.
 
 ### Quick Example
 
 ```python
-from hdc_rs import HdcClient
+from hdc_rs_py import HdcClient
 
 # Connect and list devices
 client = HdcClient("127.0.0.1:8710")
@@ -332,12 +332,12 @@ if devices:
 ### Installation
 
 ```bash
-cd hdc-py
+cd hdc-rs-py
 pip install maturin
 maturin develop  # Development mode
 # or
 maturin build --release  # Build wheel
-pip install target/wheels/hdc_rs-*.whl
+pip install target/wheels/hdc_rs_py-*.whl
 ```
 
 ## 🔍 API Reference

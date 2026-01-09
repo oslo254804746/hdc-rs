@@ -60,7 +60,7 @@ if ($LASTEXITCODE -eq 0) {
     
     # 测试导入
     Write-Host "`n测试导入模块..." -ForegroundColor Yellow
-    python -c "import hdc_rs; print('✓ 模块导入成功')"
+    python -c "import hdc_rs_py; print('✓ 模块导入成功')"
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "`n✓ 所有检查通过！" -ForegroundColor Green

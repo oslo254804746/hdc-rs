@@ -5,7 +5,7 @@
 **/*.rs.bk
 
 # Python bindings
-/hdc-py/target/
+/hdc-rs-py/target/
 *.so
 *.pyd
 *.dylib

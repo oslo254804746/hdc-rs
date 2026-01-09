@@ -14,7 +14,7 @@ pip install hdc-rs-py
 
 # 或从源码构建
 pip install maturin
-cd hdc-py
+cd hdc-rs-py
 maturin develop
 
 # 构建 wheel 包
@@ -27,7 +27,7 @@ pip install target/wheels/hdc_rs_py-*.whl
 ## 快速开始
 
 ```python
-from hdc_rs import HdcClient
+from hdc_rs_py import HdcClient
 
 # 连接到 HDC 服务器
 client = HdcClient("127.0.0.1:8710")
@@ -207,7 +207,7 @@ print(f"设备已连接: {device_id}")
 ### 完整示例
 
 ```python
-from hdc_rs import HdcClient
+from hdc_rs_py import HdcClient
 
 def main():
     # 连接到 HDC 服务器
@@ -257,7 +257,7 @@ if __name__ == "__main__":
 ### 应用管理示例
 
 ```python
-from hdc_rs import HdcClient
+from hdc_rs_py_py_py import HdcClient
 
 client = HdcClient("127.0.0.1:8710")
 devices = client.list_targets()
@@ -277,7 +277,7 @@ print(result)
 ### 设备监控示例
 
 ```python
-from hdc_rs import HdcClient
+from hdc_rs_py import HdcClient
 import time
 
 def monitor_devices():

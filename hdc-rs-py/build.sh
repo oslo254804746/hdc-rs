@@ -75,7 +75,7 @@ if [ $? -eq 0 ]; then
     # 测试导入
     echo
     echo "测试导入模块..."
-    $PYTHON -c "import hdc_rs; print('✓ 模块导入成功')"
+    $PYTHON -c "import hdc_rs_py; print('✓ 模块导入成功')"
     
     if [ $? -eq 0 ]; then
         echo

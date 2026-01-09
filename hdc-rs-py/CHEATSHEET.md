@@ -2,7 +2,7 @@
 
 ## 导入
 ```python
-from hdc_rs import HdcClient
+from hdc_rs_py import HdcClient
 ```
 
 ## 初始化
@@ -63,7 +63,7 @@ client = HdcClient("127.0.0.1:8710")
 ## 完整示例
 
 ```python
-from hdc_rs import HdcClient
+from hdc_rs_py import HdcClient
 
 # 连接
 client = HdcClient("127.0.0.1:8710")

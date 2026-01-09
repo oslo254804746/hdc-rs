@@ -74,7 +74,7 @@ def test_monitor_devices():
 
 
 def main():
-    print("HDC-PY Streaming Features Test")
+    print("HDC-RS-PY Streaming Features Test")
     print("=" * 50 + "\n")
     
     results = []
