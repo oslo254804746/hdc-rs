@@ -68,6 +68,43 @@ devices = client.list_targets()
 print(devices)  # ['FMR0223C13000649']
 ```
 
+#### `list_targets_verbose() -> str`
+
+返回 `list targets -v` 的原始详细输出。
+
+#### `check_server() -> str`
+
+执行 `checkserver`。
+
+#### `version() -> str`
+
+返回 HDC 版本信息。
+
+#### `help(verbose: bool = False) -> str`
+
+返回 HDC 帮助文本。`verbose=True` 时请求详细帮助。
+
+#### `discover() -> str`
+
+请求 HDC server 发现目标设备。
+
+#### `check_device(connect_key: str | None = None) -> str`
+
+检查当前或指定设备状态。
+
+#### `target_connect(key: str) -> str` / `target_disconnect(key: str) -> str`
+
+连接或断开 TCP/manual 目标。
+
+```python
+client.target_connect("192.168.0.2:10178")
+client.target_disconnect("192.168.0.2:10178")
+```
+
+#### `connect_any() -> str` / `reconnect_target(connect_key: str | None = None) -> str`
+
+选择任意可用目标，或重连当前/指定目标。
+
 #### `connect_device(device_id: str)`
 
 连接到指定设备。
@@ -85,7 +122,23 @@ output = client.shell("ls -l /data")
 print(output)
 ```
 
-#### `file_send(local_path: str, remote_path: str, compress: bool = False, hold_timestamp: bool = False, sync_mode: bool = False, mode_sync: bool = False) -> str`
+#### `target_mount() -> str`
+
+执行 `target mount`。
+
+#### `target_boot(mode: str | None = None) -> str`
+
+执行 `target boot`。`mode` 可传入 `"recovery"`、`"bootloader"` 或上游支持的自定义值。
+
+#### `smode(enable_root: bool) -> str`
+
+切换 daemon root/unroot 模式。`True` 渲染 `smode`，`False` 渲染 `smode -r`。
+
+#### `tmode_usb() -> str` / `tmode_port(port: int | None = None) -> str` / `tmode_port_close() -> str`
+
+切换 target transport 模式。
+
+#### `file_send(local_path: str, remote_path: str, compress: bool = False, hold_timestamp: bool = False, sync_mode: bool = False, mode_sync: bool = False, debug_dir: bool = False, cwd: str | None = None) -> str`
 
 发送文件到设备。
 
@@ -95,6 +148,8 @@ print(output)
 - `hold_timestamp`: 是否保留时间戳（默认：False）
 - `sync_mode`: 仅同步较新的文件（默认：False）
 - `mode_sync`: 同步文件权限模式（默认：False）
+- `debug_dir`: 使用 debug 应用目录（默认：False）
+- `cwd`: 工作目录（默认：None）
 
 ```python
 result = client.file_send(
@@ -102,11 +157,13 @@ result = client.file_send(
     "/data/local/tmp/remote.txt",
     compress=False,
     hold_timestamp=True,
+    debug_dir=True,
+    cwd="/data/local/tmp",
 )
 print(result)
 ```
 
-#### `file_recv(remote_path: str, local_path: str, compress: bool = False, hold_timestamp: bool = False, sync_mode: bool = False, mode_sync: bool = False) -> str`
+#### `file_recv(remote_path: str, local_path: str, compress: bool = False, hold_timestamp: bool = False, sync_mode: bool = False, mode_sync: bool = False, debug_dir: bool = False, cwd: str | None = None) -> str`
 
 从设备接收文件。
 
@@ -116,6 +173,8 @@ print(result)
 - `hold_timestamp`: 是否保留时间戳（默认：False）
 - `sync_mode`: 仅同步较新的文件（默认：False）
 - `mode_sync`: 同步文件权限模式（默认：False）
+- `debug_dir`: 使用 debug 应用目录（默认：False）
+- `cwd`: 工作目录（默认：None）
 
 ```python
 result = client.file_recv(
@@ -155,6 +214,14 @@ result = client.rport("tcp:9090", "tcp:9090")
 print(result)
 ```
 
+#### `fport_list() -> list[str]` / `rport_list() -> list[str]`
+
+列出端口转发任务。
+
+#### `rport_remove(task_str: str) -> str`
+
+移除反向端口转发。
+
 #### `fport_remove(task_str: str) -> str`
 
 移除端口转发。
@@ -164,26 +231,41 @@ result = client.fport_remove("tcp:8080 tcp:8080")
 print(result)
 ```
 
-#### `install(packages: list[str], replace: bool = False, shared: bool = False) -> str`
+#### `install(packages: list[str], replace: bool = False, shared: bool = False, cwd: str | None = None, wait_time: int | None = None, user_id: str | None = None, bundle_path: str | None = None, list_options: bool = False, grant_permissions: bool = False) -> str`
 
 安装应用程序。
 
 - `packages`: 包文件路径列表（.hap 或 .hsp 文件）
 - `replace`: 替换现有应用（默认：False）
 - `shared`: 为多应用安装共享包（默认：False）
+- `cwd`: 工作目录（默认：None）
+- `wait_time`: 等待时间（默认：None）
+- `user_id`: 用户 ID（默认：None）
+- `bundle_path`: bundle 路径（默认：None）
+- `list_options`: 列出 install 选项（默认：False）
+- `grant_permissions`: 安装后授予权限（默认：False）
 
 ```python
-result = client.install(["app.hap"], replace=True)
+result = client.install(["app.hap"], replace=True, wait_time=30, grant_permissions=True)
 print(result)
 ```
 
-#### `uninstall(package: str, keep_data: bool = False, shared: bool = False) -> str`
+#### `sideload(path: str) -> str`
+
+执行 `sideload path`。
+
+#### `uninstall(package: str, keep_data: bool = False, shared: bool = False, bundle_name: str | None = None, module_name: str | None = None, version_code: str | None = None, user_id: str | None = None, list_options: bool = False) -> str`
 
 卸载应用程序。
 
 - `package`: 包名
 - `keep_data`: 保留数据和缓存目录（默认：False）
 - `shared`: 移除共享包（默认：False）
+- `bundle_name`: bundle 名（默认：None）
+- `module_name`: module 名（默认：None）
+- `version_code`: 版本号（默认：None）
+- `user_id`: 用户 ID（默认：None）
+- `list_options`: 列出 uninstall 选项（默认：False）
 
 ```python
 result = client.uninstall("com.example.app")
@@ -205,6 +287,18 @@ print(logs)
 logs = client.hilog("-t MyTag")
 print(logs)
 ```
+
+#### `bugreport(output_file: str | None = None) -> str`
+
+收集 bugreport。
+
+#### `jpid() -> list[str]`
+
+列出 debug/JDWP 进程 ID。
+
+#### `track_jpid(callback, include_release: bool = False, pid_only: bool = False) -> None`
+
+持续跟踪 debug/JDWP 进程变化。回调返回 `True` 继续，返回 `False` 停止。
 
 #### `wait_for_device() -> str`
 

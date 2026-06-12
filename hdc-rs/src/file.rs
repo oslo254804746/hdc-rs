@@ -14,6 +14,8 @@ pub struct FileTransferOptions {
     mode_sync: bool,
     /// Send/receive file to debug application directory (-b)
     debug_dir: bool,
+    /// Execute file transfer relative to working directory (-cwd)
+    cwd: Option<String>,
 }
 
 impl FileTransferOptions {
@@ -52,6 +54,12 @@ impl FileTransferOptions {
         self
     }
 
+    /// Set transfer working directory
+    pub fn cwd(mut self, cwd: impl Into<String>) -> Self {
+        self.cwd = Some(cwd.into());
+        self
+    }
+
     /// Convert options to command flags string
     pub(crate) fn to_flags(&self) -> String {
         let mut flags = Vec::new();
@@ -70,6 +78,10 @@ impl FileTransferOptions {
         }
         if self.debug_dir {
             flags.push("-b");
+        }
+        if let Some(cwd) = &self.cwd {
+            flags.push("-cwd");
+            flags.push(cwd);
         }
 
         flags.join(" ")
@@ -103,6 +115,14 @@ mod tests {
 
         let opts = FileTransferOptions::new().sync_mode(true).mode_sync(true);
         assert_eq!(opts.to_flags(), "-sync -m");
+    }
+
+    #[test]
+    fn test_file_options_render_debug_dir_and_cwd() {
+        let opts = FileTransferOptions::new()
+            .debug_dir(true)
+            .cwd("/data/local/tmp");
+        assert_eq!(opts.to_flags(), "-b -cwd /data/local/tmp");
     }
 
     #[test]

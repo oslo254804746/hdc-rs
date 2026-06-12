@@ -82,6 +82,8 @@ pub mod app;
 #[cfg(feature = "blocking")]
 pub mod blocking;
 pub mod client;
+mod command_builder;
+pub mod device;
 pub mod error;
 pub mod file;
 pub mod forward;
@@ -89,6 +91,7 @@ pub mod protocol;
 
 pub use app::{InstallOptions, UninstallOptions};
 pub use client::HdcClient;
+pub use device::{TargetBootMode, TargetMode};
 pub use error::{HdcError, Result};
 pub use file::{FileTransferDirection, FileTransferOptions};
 pub use forward::{ForwardNode, ForwardTask};

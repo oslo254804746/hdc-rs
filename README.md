@@ -198,6 +198,81 @@ For detailed API documentation, visit [docs.rs/hdc-rs](https://docs.rs/hdc-rs).
 - **`ForwardNode`** - Port forwarding endpoint specification
 - **`InstallOptions`** / **`UninstallOptions`** - App management options
 - **`FileTransferOptions`** - File transfer configuration
+- **`TargetBootMode`** / **`TargetMode`** - Device control command options
+
+### Client SDK Examples
+
+Connect or disconnect a TCP/manual target:
+
+```rust
+use hdc_rs::HdcClient;
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+client.target_connect("192.168.0.2:10178").await?;
+client.target_disconnect("192.168.0.2:10178").await?;
+# Ok(())
+# }
+```
+
+Run common device-control commands:
+
+```rust
+use hdc_rs::{HdcClient, TargetBootMode, TargetMode};
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+client.target_mount().await?;
+client.target_boot(Some(TargetBootMode::Recovery)).await?;
+client.smode(true).await?;
+client.tmode(TargetMode::Port(Some(10178))).await?;
+# Ok(())
+# }
+```
+
+Collect diagnostics and debug process identifiers:
+
+```rust
+use hdc_rs::HdcClient;
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+let report = client.bugreport(None).await?;
+let jpids = client.jpid().await?;
+println!("{} {:?}", report, jpids);
+# Ok(())
+# }
+```
+
+Use extended file and app options:
+
+```rust
+use hdc_rs::{FileTransferOptions, HdcClient, InstallOptions, UninstallOptions};
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+let file_opts = FileTransferOptions::new()
+    .compress(true)
+    .debug_dir(true)
+    .cwd("/data/local/tmp");
+client.file_send("local.txt", "remote.txt", file_opts).await?;
+
+let install_opts = InstallOptions::new()
+    .replace(true)
+    .cwd("/tmp")
+    .wait_time(30)
+    .grant_permissions(true);
+client.install(&["app.hap"], install_opts).await?;
+
+let uninstall_opts = UninstallOptions::new()
+    .keep_data(true)
+    .user_id("100");
+client.uninstall("com.example.app", uninstall_opts).await?;
+# Ok(())
+# }
+```
+
+See [docs/hdc-client-api-matrix.md](docs/hdc-client-api-matrix.md) for the async, blocking, and Python API coverage matrix.
 
 ## 🏗️ Architecture
 

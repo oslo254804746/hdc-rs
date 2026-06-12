@@ -65,6 +65,108 @@ impl HdcClient {
         self.runtime.block_on(self.inner.list_targets())
     }
 
+    /// List all connected devices with verbose upstream output.
+    pub fn list_targets_verbose(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.list_targets_verbose())
+    }
+
+    /// Check HDC server version/state.
+    pub fn check_server(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.check_server())
+    }
+
+    /// Get HDC version information.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hdc_rs::blocking::HdcClient;
+    ///
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
+    /// println!("{}", client.version()?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn version(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.version())
+    }
+
+    /// Get HDC help text.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hdc_rs::blocking::HdcClient;
+    ///
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
+    /// println!("{}", client.help(false)?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn help(&mut self, verbose: bool) -> Result<String> {
+        self.runtime.block_on(self.inner.help(verbose))
+    }
+
+    /// Ask the HDC server to discover targets.
+    pub fn discover(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.discover())
+    }
+
+    /// Check target device state.
+    pub fn check_device(&mut self, connect_key: Option<&str>) -> Result<String> {
+        self.runtime.block_on(self.inner.check_device(connect_key))
+    }
+
+    /// Connect to a target by connect key, such as `host:port`.
+    pub fn target_connect(&mut self, key: &str) -> Result<String> {
+        self.runtime.block_on(self.inner.target_connect(key))
+    }
+
+    /// Disconnect a target by connect key.
+    pub fn target_disconnect(&mut self, key: &str) -> Result<String> {
+        self.runtime.block_on(self.inner.target_disconnect(key))
+    }
+
+    /// Select any available target.
+    pub fn connect_any(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.connect_any())
+    }
+
+    /// Reconnect the current or specified target.
+    pub fn reconnect_target(&mut self, connect_key: Option<&str>) -> Result<String> {
+        self.runtime
+            .block_on(self.inner.reconnect_target(connect_key))
+    }
+
+    /// Mount the target filesystem.
+    pub fn target_mount(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.target_mount())
+    }
+
+    /// Boot the target, optionally using an upstream boot mode.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hdc_rs::blocking::HdcClient;
+    /// use hdc_rs::TargetBootMode;
+    ///
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
+    /// client.target_boot(Some(TargetBootMode::Recovery))?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn target_boot(&mut self, mode: Option<crate::device::TargetBootMode>) -> Result<String> {
+        self.runtime.block_on(self.inner.target_boot(mode))
+    }
+
+    /// Switch daemon privilege mode.
+    pub fn smode(&mut self, enable_root: bool) -> Result<String> {
+        self.runtime.block_on(self.inner.smode(enable_root))
+    }
+
+    /// Switch daemon transport mode.
+    pub fn tmode(&mut self, mode: crate::device::TargetMode) -> Result<String> {
+        self.runtime.block_on(self.inner.tmode(mode))
+    }
+
     /// Connect to a specific device
     ///
     /// # Example
@@ -154,6 +256,21 @@ impl HdcClient {
         self.runtime.block_on(self.inner.rport(remote, local))
     }
 
+    /// List all forward/reverse tasks using `fport ls`.
+    pub fn fport_list(&mut self) -> Result<Vec<String>> {
+        self.runtime.block_on(self.inner.fport_list())
+    }
+
+    /// List reverse port forward tasks.
+    pub fn rport_list(&mut self) -> Result<Vec<String>> {
+        self.runtime.block_on(self.inner.rport_list())
+    }
+
+    /// Remove a reverse port forward mapping.
+    pub fn rport_remove(&mut self, task_str: &str) -> Result<String> {
+        self.runtime.block_on(self.inner.rport_remove(task_str))
+    }
+
     /// Remove a forward port mapping
     ///
     /// # Example
@@ -193,6 +310,11 @@ impl HdcClient {
     /// ```
     pub fn install(&mut self, packages: &[&str], options: InstallOptions) -> Result<String> {
         self.runtime.block_on(self.inner.install(packages, options))
+    }
+
+    /// Sideload an update/package file to the target.
+    pub fn sideload(&mut self, path: &str) -> Result<String> {
+        self.runtime.block_on(self.inner.sideload(path))
     }
 
     /// Uninstall an application from the device
@@ -352,6 +474,30 @@ impl HdcClient {
     {
         self.runtime
             .block_on(self.inner.hilog_stream(args, callback))
+    }
+
+    /// Collect a target bugreport.
+    pub fn bugreport(&mut self, output_file: Option<&str>) -> Result<String> {
+        self.runtime.block_on(self.inner.bugreport(output_file))
+    }
+
+    /// List debug/JDWP process identifiers.
+    pub fn jpid(&mut self) -> Result<Vec<String>> {
+        self.runtime.block_on(self.inner.jpid())
+    }
+
+    /// Track debug/JDWP process changes.
+    pub fn track_jpid<F>(
+        &mut self,
+        include_release: bool,
+        pid_only: bool,
+        callback: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.runtime
+            .block_on(self.inner.track_jpid(include_release, pid_only, callback))
     }
 
     /// Monitor device list changes with callback

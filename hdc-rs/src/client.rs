@@ -11,6 +11,15 @@ use crate::protocol::{ChannelHandShake, HdcCommand, PacketCodec};
 /// Default connection timeout
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
+fn parse_jpid_response(response: &str) -> Vec<String> {
+    response
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// HDC client for communicating with HDC server
 pub struct HdcClient {
     /// TCP stream to HDC server
@@ -252,6 +261,23 @@ impl HdcClient {
         Ok(devices)
     }
 
+    /// List connected targets with verbose upstream output.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::HdcClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// let details = client.list_targets_verbose().await?;
+    /// println!("{}", details);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn list_targets_verbose(&mut self) -> Result<String> {
+        self.send_command("list targets -v").await?;
+        self.read_response_string().await
+    }
+
     // pub async fn get_device_stream(&self, device_id: &str) -> Result<HdcClient>{
     //     let stream = timeout(DEFAULT_TIMEOUT, TcpStream::connect(&self.address))
     //         .await
@@ -307,6 +333,212 @@ impl HdcClient {
 
         debug!("Server version: {}", response);
         Ok(response)
+    }
+
+    /// Get HDC server/client protocol version information.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::HdcClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// let version = client.version().await?;
+    /// println!("{}", version);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn version(&mut self) -> Result<String> {
+        self.send_command("version").await?;
+        self.read_response_string().await
+    }
+
+    /// Get HDC help text.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::HdcClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// let help = client.help(false).await?;
+    /// let verbose_help = client.help(true).await?;
+    /// println!("{}\n{}", help, verbose_help);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn help(&mut self, verbose: bool) -> Result<String> {
+        let cmd = if verbose { "help verbose" } else { "help" };
+        self.send_command(cmd).await?;
+        self.read_response_string().await
+    }
+
+    /// Ask the HDC server to discover targets.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::HdcClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// let result = client.discover().await?;
+    /// println!("{}", result);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn discover(&mut self) -> Result<String> {
+        self.send_command("discover").await?;
+        self.read_response_string().await
+    }
+
+    /// Check target device state.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::HdcClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// let state = client.check_device(None).await?;
+    /// println!("{}", state);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn check_device(&mut self, connect_key: Option<&str>) -> Result<String> {
+        let cmd = match connect_key {
+            Some(key) if !key.is_empty() => format!("checkdevice {}", key),
+            _ => "checkdevice".to_string(),
+        };
+        self.send_command(&cmd).await?;
+        self.read_response_string().await
+    }
+
+    /// Connect to a target by connect key, such as `host:port`.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::HdcClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// client.target_connect("192.168.0.2:10178").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn target_connect(&mut self, key: &str) -> Result<String> {
+        let cmd = crate::command_builder::target_connect(key, false);
+        self.send_command(&cmd).await?;
+        self.read_response_string().await
+    }
+
+    /// Disconnect a target by connect key.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::HdcClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// client.target_disconnect("192.168.0.2:10178").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn target_disconnect(&mut self, key: &str) -> Result<String> {
+        let cmd = crate::command_builder::target_connect(key, true);
+        self.send_command(&cmd).await?;
+        self.read_response_string().await
+    }
+
+    /// Select any available target.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::HdcClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// client.connect_any().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn connect_any(&mut self) -> Result<String> {
+        self.send_command("any").await?;
+        self.read_response_string().await
+    }
+
+    /// Reconnect the current or specified target.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::HdcClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// client.reconnect_target(None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn reconnect_target(&mut self, connect_key: Option<&str>) -> Result<String> {
+        let cmd = crate::command_builder::reconnect_target(connect_key);
+        self.send_command(&cmd).await?;
+        self.read_response_string().await
+    }
+
+    /// Mount the target filesystem.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::HdcClient;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// client.target_mount().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn target_mount(&mut self) -> Result<String> {
+        let cmd = crate::command_builder::target_mount();
+        self.send_command(&cmd).await?;
+        self.read_response_string().await
+    }
+
+    /// Boot the target, optionally using an upstream boot mode.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::{HdcClient, TargetBootMode};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// client.target_boot(Some(TargetBootMode::Recovery)).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn target_boot(
+        &mut self,
+        mode: Option<crate::device::TargetBootMode>,
+    ) -> Result<String> {
+        let cmd = crate::command_builder::target_boot(mode.as_ref().map(|mode| mode.as_arg()));
+        self.send_command(&cmd).await?;
+        self.read_response_string().await
+    }
+
+    /// Switch daemon privilege mode. `true` renders `smode`, `false` renders `smode -r`.
+    pub async fn smode(&mut self, enable_root: bool) -> Result<String> {
+        let cmd = crate::command_builder::smode(enable_root);
+        self.send_command(&cmd).await?;
+        self.read_response_string().await
+    }
+
+    /// Switch daemon transport mode.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use hdc_rs::{HdcClient, TargetMode};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+    /// client.tmode(TargetMode::Port(Some(10178))).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn tmode(&mut self, mode: crate::device::TargetMode) -> Result<String> {
+        let cmd = match mode {
+            crate::device::TargetMode::Usb => crate::command_builder::tmode_usb(),
+            crate::device::TargetMode::Port(port) => crate::command_builder::tmode_port(port),
+            crate::device::TargetMode::PortClose => crate::command_builder::tmode_port_close(),
+        };
+        self.send_command(&cmd).await?;
+        self.read_response_string().await
     }
 
     /// Execute a command on a specific device
@@ -422,6 +654,51 @@ impl HdcClient {
 
         let response = self.read_response_string().await?;
         debug!("Reverse forward response: {}", response);
+        Ok(response)
+    }
+
+    /// List reverse port forward tasks using explicit `rport ls`.
+    ///
+    /// Note: This command does not require a device connection.
+    pub async fn rport_list(&mut self) -> Result<Vec<String>> {
+        info!("Listing reverse forward tasks");
+
+        let mut temp_client = Self::new(&self.address);
+        temp_client.connect_internal().await?;
+
+        temp_client.send_command("rport ls").await?;
+        let response = temp_client.read_response_string().await?;
+        debug!("Reverse forward list response: {}", response);
+
+        if response.starts_with("[Fail]") {
+            return Err(HdcError::Protocol(response));
+        }
+
+        Ok(response
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// Remove a reverse port forward task using explicit `rport rm`.
+    pub async fn rport_remove(&mut self, task_str: &str) -> Result<String> {
+        info!("Removing reverse forward task: {}", task_str);
+
+        let mut temp_client = Self::new(&self.address);
+        temp_client.connect_internal().await?;
+
+        let cmd = format!("rport rm {}", task_str);
+        temp_client.send_command(&cmd).await?;
+
+        let response = temp_client.read_response_string().await?;
+        debug!("Remove reverse forward response: {}", response);
+
+        if response.starts_with("[Fail]") {
+            return Err(HdcError::Protocol(response));
+        }
+
         Ok(response)
     }
 
@@ -555,6 +832,13 @@ impl HdcClient {
 
         debug!("Install output: {} bytes", output.len());
         Ok(output)
+    }
+
+    /// Sideload an update/package file to the target.
+    pub async fn sideload(&mut self, path: &str) -> Result<String> {
+        let cmd = format!("sideload {}", path);
+        self.send_command(&cmd).await?;
+        self.read_response_string().await
     }
 
     /// Uninstall application package from device
@@ -722,6 +1006,52 @@ impl HdcClient {
                     warn!("Timeout reading hilog stream");
                     break;
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Collect a target bugreport.
+    pub async fn bugreport(&mut self, output_file: Option<&str>) -> Result<String> {
+        let cmd = match output_file {
+            Some(path) if !path.is_empty() => format!("bugreport {}", path),
+            _ => "bugreport".to_string(),
+        };
+        self.send_command(&cmd).await?;
+        self.read_response_string().await
+    }
+
+    /// List debug/JDWP process identifiers.
+    pub async fn jpid(&mut self) -> Result<Vec<String>> {
+        self.send_command("jpid").await?;
+        let response = self.read_response_string().await?;
+        Ok(parse_jpid_response(&response))
+    }
+
+    /// Track debug/JDWP process changes.
+    pub async fn track_jpid<F>(
+        &mut self,
+        include_release: bool,
+        pid_only: bool,
+        mut callback: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        let cmd = if pid_only {
+            "track-jpid -p"
+        } else if include_release {
+            "track-jpid -a"
+        } else {
+            "track-jpid"
+        };
+        self.send_command(cmd).await?;
+
+        loop {
+            let response = self.read_response_string().await?;
+            if response.is_empty() || !callback(&response) {
+                break;
             }
         }
 
@@ -1015,5 +1345,11 @@ mod tests {
         let client = HdcClient::new("127.0.0.1:8710");
         assert_eq!(client.address, "127.0.0.1:8710");
         assert!(!client.is_connected());
+    }
+
+    #[test]
+    fn parses_jpid_response_lines() {
+        let pids = parse_jpid_response(" 123 \n\n456\n\t789\t\n");
+        assert_eq!(pids, vec!["123", "456", "789"]);
     }
 }
