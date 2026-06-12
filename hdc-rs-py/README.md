@@ -15,10 +15,10 @@ pip install hdc-rs-py
 # 或从源码构建
 pip install maturin
 cd hdc-rs-py
-maturin develop
+PYO3_PYTHON=$(command -v python3) maturin develop
 
 # 构建 wheel 包
-maturin build --release
+PYO3_PYTHON=$(command -v python3) maturin build --release
 
 # 安装构建好的 wheel
 pip install target/wheels/hdc_rs_py-*.whl
@@ -85,31 +85,44 @@ output = client.shell("ls -l /data")
 print(output)
 ```
 
-#### `file_send(local_path: str, remote_path: str, compress: bool = False, preserve_timestamp: bool = False) -> str`
+#### `file_send(local_path: str, remote_path: str, compress: bool = False, hold_timestamp: bool = False, sync_mode: bool = False, mode_sync: bool = False) -> str`
 
 发送文件到设备。
 
 - `local_path`: 本地文件路径
 - `remote_path`: 设备上的远程路径
 - `compress`: 是否压缩传输（默认：False）
-- `preserve_timestamp`: 是否保留时间戳（默认：False）
+- `hold_timestamp`: 是否保留时间戳（默认：False）
+- `sync_mode`: 仅同步较新的文件（默认：False）
+- `mode_sync`: 同步文件权限模式（默认：False）
 
 ```python
-result = client.file_send("local.txt", "/data/local/tmp/remote.txt")
+result = client.file_send(
+    "local.txt",
+    "/data/local/tmp/remote.txt",
+    compress=False,
+    hold_timestamp=True,
+)
 print(result)
 ```
 
-#### `file_recv(remote_path: str, local_path: str, compress: bool = False, preserve_timestamp: bool = False) -> str`
+#### `file_recv(remote_path: str, local_path: str, compress: bool = False, hold_timestamp: bool = False, sync_mode: bool = False, mode_sync: bool = False) -> str`
 
 从设备接收文件。
 
 - `remote_path`: 设备上的远程路径
 - `local_path`: 本地文件路径
 - `compress`: 是否压缩传输（默认：False）
-- `preserve_timestamp`: 是否保留时间戳（默认：False）
+- `hold_timestamp`: 是否保留时间戳（默认：False）
+- `sync_mode`: 仅同步较新的文件（默认：False）
+- `mode_sync`: 同步文件权限模式（默认：False）
 
 ```python
-result = client.file_recv("/data/local/tmp/remote.txt", "local.txt")
+result = client.file_recv(
+    "/data/local/tmp/remote.txt",
+    "local.txt",
+    hold_timestamp=True,
+)
 print(result)
 ```
 
@@ -202,6 +215,30 @@ device_id = client.wait_for_device()
 print(f"设备已连接: {device_id}")
 ```
 
+#### `hilog_stream(callback, args: str | None = None) -> None`
+
+持续读取设备日志并把日志片段传给回调。回调返回 `True` 继续读取，返回 `False` 停止。
+
+```python
+def on_log(chunk: str) -> bool:
+    print(chunk, end="")
+    return True
+
+client.hilog_stream(on_log, args="-t MyTag")
+```
+
+#### `monitor_devices(callback, interval_secs: int = 2) -> None`
+
+轮询设备列表，在列表变化时调用回调。回调返回 `True` 继续监控，返回 `False` 停止。
+
+```python
+def on_devices(devices: list[str]) -> bool:
+    print(f"当前设备: {devices}")
+    return True
+
+client.monitor_devices(on_devices, interval_secs=2)
+```
+
 ## 示例
 
 ### 完整示例
@@ -257,7 +294,7 @@ if __name__ == "__main__":
 ### 应用管理示例
 
 ```python
-from hdc_rs_py_py_py import HdcClient
+from hdc_rs_py import HdcClient
 
 client = HdcClient("127.0.0.1:8710")
 devices = client.list_targets()
@@ -278,27 +315,32 @@ print(result)
 
 ```python
 from hdc_rs_py import HdcClient
-import time
 
-def monitor_devices():
-    client = HdcClient("127.0.0.1:8710")
-    
-    while True:
-        devices = client.list_targets()
-        print(f"当前设备: {devices}")
-        time.sleep(5)
+def on_devices(devices: list[str]) -> bool:
+    print(f"当前设备: {devices}")
+    return True
 
 if __name__ == "__main__":
-    monitor_devices()
+    client = HdcClient("127.0.0.1:8710")
+    client.monitor_devices(on_devices, interval_secs=2)
 ```
 
 ## 开发
+
+本地验证 PyO3 绑定时建议显式设置 Python 解释器，避免 PyO3 读取不存在的 `.venv/bin/python`：
+
+```bash
+PYO3_PYTHON=$(command -v python3) cargo test --workspace --all-features
+PYO3_PYTHON=$(command -v python3) cargo clippy --workspace --all-features -- -D warnings
+```
+
+本文档中的连接、shell、文件传输、端口转发、应用、hilog 和设备监控示例都需要本机有 HDC server，并且对应命令需要已连接且授权的 HarmonyOS/OpenHarmony 设备。
 
 ### 运行测试
 
 ```bash
 # 在开发模式下构建并安装
-maturin develop
+PYO3_PYTHON=$(command -v python3) maturin develop
 
 # 运行 Python 测试
 python -m pytest tests/
@@ -308,7 +350,7 @@ python -m pytest tests/
 
 ```bash
 # 构建 release 版本
-maturin build --release
+PYO3_PYTHON=$(command -v python3) maturin build --release
 
 # 构建并发布到 PyPI
 maturin publish

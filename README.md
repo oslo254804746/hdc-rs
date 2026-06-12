@@ -639,14 +639,26 @@ cargo build --all-features
 ### Running Tests
 
 ```bash
-# Run all tests
-cargo test
+# Run the pure Rust crate tests used by CI
+cargo test -p hdc-rs --all-features
 
-# Run integration tests (requires HDC server running)
-cargo test --test integration_test
+# Run the full workspace, including PyO3 bindings.
+# Set PYO3_PYTHON explicitly so PyO3 does not depend on a local .venv path.
+PYO3_PYTHON=$(command -v python3) cargo test --workspace --all-features
 
 # Run specific test
 cargo test test_name
+```
+
+The integration suites in `tests/integration_test.rs` and
+`tests/forward_app_test.rs` are marked `#[ignore]` because they require a real
+HDC server at `127.0.0.1:8710`; shell, file, forward, app, hilog, and monitor
+flows also require a connected and authorized HarmonyOS/OpenHarmony device.
+Run them explicitly when that environment is available:
+
+```bash
+cargo test --test integration_test -- --ignored
+cargo test --test forward_app_test -- --ignored
 ```
 
 ### Enable Debug Logging
@@ -668,10 +680,10 @@ set RUST_LOG=hdc_rs=debug && cargo run --example list_devices
 
 ```bash
 # Format code
-cargo fmt
+cargo fmt --all -- --check
 
 # Lint with Clippy
-cargo clippy -- -D warnings
+PYO3_PYTHON=$(command -v python3) cargo clippy --workspace --all-features -- -D warnings
 
 # Check without building
 cargo check
@@ -825,12 +837,16 @@ Contributions are welcome! Here's how you can help:
 ### Testing
 
 ```bash
-# Run all tests
-cargo test
+# Run the pure Rust crate tests used by CI
+cargo test -p hdc-rs --all-features
+
+# Run the full workspace, including PyO3 bindings
+PYO3_PYTHON=$(command -v python3) cargo test --workspace --all-features
 
 # Run specific test suite
 cargo test --lib
-cargo test --test integration_test
+cargo test --test integration_test -- --ignored
+cargo test --test forward_app_test -- --ignored
 
 # Run with verbose output
 cargo test -- --nocapture
