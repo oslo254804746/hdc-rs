@@ -29,3 +29,5 @@ Thumbs.db
 
 # Logs
 *.log
+raw-projects/
+dev-docs/

@@ -56,9 +56,17 @@ impl PacketCodec {
     where
         S: AsyncReadExt + Unpin,
     {
-        // Read length prefix (4 bytes, big-endian)
+        // Read the first length byte separately so a clean transport close is
+        // distinguishable from a truncated length prefix.
         let mut len_buf = [0u8; PACKET_LENGTH_SIZE];
-        stream.read_exact(&mut len_buf).await?;
+        match stream.read_exact(&mut len_buf[..1]).await {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Err(HdcError::ConnectionClosed);
+            }
+            Err(error) => return Err(HdcError::Io(error)),
+        }
+        stream.read_exact(&mut len_buf[1..]).await?;
         let packet_len = u32::from_be_bytes(len_buf) as usize;
 
         if packet_len == 0 {
@@ -116,6 +124,7 @@ impl Default for PacketCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{duplex, AsyncWriteExt};
 
     #[test]
     fn test_encode() {
@@ -140,5 +149,38 @@ mod tests {
         assert_eq!(packet.len(), 4);
         let len = u32::from_be_bytes([packet[0], packet[1], packet[2], packet[3]]);
         assert_eq!(len, 0);
+    }
+
+    #[tokio::test]
+    async fn clean_transport_close_is_distinct_from_truncation() {
+        let (mut reader, writer) = duplex(64);
+        drop(writer);
+
+        let error = PacketCodec::new().decode(&mut reader).await.unwrap_err();
+        assert!(matches!(error, HdcError::ConnectionClosed));
+    }
+
+    #[tokio::test]
+    async fn truncated_length_prefix_is_an_io_error() {
+        let (mut reader, mut writer) = duplex(64);
+        writer.write_all(&[0, 0]).await.unwrap();
+        drop(writer);
+
+        let error = PacketCodec::new().decode(&mut reader).await.unwrap_err();
+        assert!(
+            matches!(error, HdcError::Io(error) if error.kind() == std::io::ErrorKind::UnexpectedEof)
+        );
+    }
+
+    #[tokio::test]
+    async fn truncated_packet_body_is_an_io_error() {
+        let (mut reader, mut writer) = duplex(64);
+        writer.write_all(&[0, 0, 0, 5, 1, 2]).await.unwrap();
+        drop(writer);
+
+        let error = PacketCodec::new().decode(&mut reader).await.unwrap_err();
+        assert!(
+            matches!(error, HdcError::Io(error) if error.kind() == std::io::ErrorKind::UnexpectedEof)
+        );
     }
 }

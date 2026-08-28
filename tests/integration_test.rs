@@ -82,3 +82,23 @@ async fn test_shell_on_device() {
     assert!(output.is_ok(), "Should execute shell command on device");
     info!("shell_on_device output: {:?}", output.unwrap());
 }
+
+#[tokio::test]
+#[ignore] // Requires HDC server running and device connected
+async fn test_debug_commands() {
+    init_logger();
+    let mut client = HdcClient::connect("127.0.0.1:8710")
+        .await
+        .expect("Failed to connect");
+
+    let devices = client.list_targets().await.expect("Failed to list devices");
+    assert!(!devices.is_empty(), "No devices connected");
+
+    client
+        .connect_device(&devices[0])
+        .await
+        .expect("Failed to connect to device");
+
+    let jpids = client.jpid().await;
+    info!("jpid result: {:?}", jpids);
+}

@@ -2,6 +2,8 @@
 
 这是 hdc-rs 的 Python 绑定，提供了 HarmonyOS Device Connector (HDC) 客户端的 Python 接口。
 
+当前版本：0.2.0
+
 ## 安装
 
 ### 从源码构建
@@ -15,10 +17,10 @@ pip install hdc-rs-py
 # 或从源码构建
 pip install maturin
 cd hdc-rs-py
-maturin develop
+PYO3_PYTHON=$(command -v python3) maturin develop
 
 # 构建 wheel 包
-maturin build --release
+PYO3_PYTHON=$(command -v python3) maturin build --release
 
 # 安装构建好的 wheel
 pip install target/wheels/hdc_rs_py-*.whl
@@ -38,8 +40,9 @@ print(f"设备列表: {devices}")
 
 if devices:
     # 连接到第一个设备
+    client = HdcClient("127.0.0.1:8710")
     client.connect_device(devices[0])
-    
+
     # 执行 shell 命令
     output = client.shell("ls -l /data")
     print(output)
@@ -68,6 +71,50 @@ devices = client.list_targets()
 print(devices)  # ['FMR0223C13000649']
 ```
 
+#### `list_targets_verbose() -> str`
+
+返回 `list targets -v` 的原始详细输出。
+
+#### `check_server() -> str`
+
+执行 `checkserver`。
+
+#### `version() -> str`
+
+返回 HDC 版本信息。
+
+#### `help(verbose: bool = False) -> str`
+
+返回 HDC 帮助文本。`verbose=True` 时请求详细帮助。
+
+#### `discover() -> str`
+
+请求 HDC server 发现目标设备。
+
+#### `check_device(connect_key: str | None = None) -> str`
+
+检查当前或指定设备状态。
+
+`list_targets()`、`list_targets_verbose()`、`check_server()`、`version()`、
+`help()`、`discover()` 和 `check_device()` 都是一次性任务；调用返回后该
+客户端已断开。若要继续执行另一项终端任务，请创建新的 `HdcClient`。
+
+#### `target_connect(key: str) -> str` / `target_disconnect(key: str) -> str`
+
+连接或断开 TCP/manual 目标。
+
+```python
+client = HdcClient("127.0.0.1:8710")
+client.target_connect("192.168.0.2:10178")
+
+client = HdcClient("127.0.0.1:8710")
+client.target_disconnect("192.168.0.2:10178")
+```
+
+#### `connect_any() -> str` / `reconnect_target(connect_key: str | None = None) -> str`
+
+选择任意可用目标，或重连当前/指定目标。
+
 #### `connect_device(device_id: str)`
 
 连接到指定设备。
@@ -85,31 +132,68 @@ output = client.shell("ls -l /data")
 print(output)
 ```
 
-#### `file_send(local_path: str, remote_path: str, compress: bool = False, preserve_timestamp: bool = False) -> str`
+#### `target_mount() -> str`
+
+执行 `target mount`。
+
+#### `target_boot(mode: str | None = None) -> str`
+
+执行 `target boot`。`mode` 可传入 `"recovery"`、`"bootloader"` 或上游支持的自定义值。
+
+#### `smode(enable_root: bool) -> str`
+
+切换 daemon root/unroot 模式。`True` 渲染 `smode`，`False` 渲染 `smode -r`。
+
+#### `tmode_usb() -> str` / `tmode_port(port: int | None = None) -> str` / `tmode_port_close() -> str`
+
+切换 target transport 模式。
+
+这些 target-control task 会消耗当前 channel，返回后需要重新创建客户端再执行下一个 terminal task。shell、文件传输、应用管理和 hilog 任务也遵循相同的生命周期。
+
+#### `file_send(local_path: str, remote_path: str, compress: bool = False, hold_timestamp: bool = False, sync_mode: bool = False, mode_sync: bool = False, debug_dir: bool = False, cwd: str | None = None) -> str`
 
 发送文件到设备。
 
 - `local_path`: 本地文件路径
 - `remote_path`: 设备上的远程路径
 - `compress`: 是否压缩传输（默认：False）
-- `preserve_timestamp`: 是否保留时间戳（默认：False）
+- `hold_timestamp`: 是否保留时间戳（默认：False）
+- `sync_mode`: 仅同步较新的文件（默认：False）
+- `mode_sync`: 同步文件权限模式（默认：False）
+- `debug_dir`: 使用 debug 应用目录（默认：False）
+- `cwd`: 工作目录（默认：None）
 
 ```python
-result = client.file_send("local.txt", "/data/local/tmp/remote.txt")
+result = client.file_send(
+    "local.txt",
+    "/data/local/tmp/remote.txt",
+    compress=False,
+    hold_timestamp=True,
+    debug_dir=True,
+    cwd="/data/local/tmp",
+)
 print(result)
 ```
 
-#### `file_recv(remote_path: str, local_path: str, compress: bool = False, preserve_timestamp: bool = False) -> str`
+#### `file_recv(remote_path: str, local_path: str, compress: bool = False, hold_timestamp: bool = False, sync_mode: bool = False, mode_sync: bool = False, debug_dir: bool = False, cwd: str | None = None) -> str`
 
 从设备接收文件。
 
 - `remote_path`: 设备上的远程路径
 - `local_path`: 本地文件路径
 - `compress`: 是否压缩传输（默认：False）
-- `preserve_timestamp`: 是否保留时间戳（默认：False）
+- `hold_timestamp`: 是否保留时间戳（默认：False）
+- `sync_mode`: 仅同步较新的文件（默认：False）
+- `mode_sync`: 同步文件权限模式（默认：False）
+- `debug_dir`: 使用 debug 应用目录（默认：False）
+- `cwd`: 工作目录（默认：None）
 
 ```python
-result = client.file_recv("/data/local/tmp/remote.txt", "local.txt")
+result = client.file_recv(
+    "/data/local/tmp/remote.txt",
+    "local.txt",
+    hold_timestamp=True,
+)
 print(result)
 ```
 
@@ -142,6 +226,14 @@ result = client.rport("tcp:9090", "tcp:9090")
 print(result)
 ```
 
+创建 `fport()` 或 `rport()` 后该客户端连接已关闭；如需继续执行其他终端
+任务，请创建新的 `HdcClient`。`fport_list()` 和 `fport_remove()` 使用独立
+的临时 server 连接。
+
+#### `fport_list() -> list[str]`
+
+列出所有端口转发任务（包括正向和反向）。
+
 #### `fport_remove(task_str: str) -> str`
 
 移除端口转发。
@@ -151,26 +243,37 @@ result = client.fport_remove("tcp:8080 tcp:8080")
 print(result)
 ```
 
-#### `install(packages: list[str], replace: bool = False, shared: bool = False) -> str`
+#### `install(packages: list[str], replace: bool = False, shared: bool = False, cwd: str | None = None, wait_time: int | None = None, user_id: str | None = None, list_options: bool = False, grant_permissions: bool = False) -> str`
 
 安装应用程序。
 
 - `packages`: 包文件路径列表（.hap 或 .hsp 文件）
 - `replace`: 替换现有应用（默认：False）
 - `shared`: 为多应用安装共享包（默认：False）
+- `cwd`: 工作目录（默认：None）
+- `wait_time`: 等待时间（默认：None）
+- `user_id`: 用户 ID（默认：None）
+- `list_options`: 列出 install 选项（默认：False）
+- `grant_permissions`: 安装后授予权限（默认：False）
 
 ```python
-result = client.install(["app.hap"], replace=True)
+result = client.install(["app.hap"], replace=True, wait_time=30, grant_permissions=True)
 print(result)
 ```
 
-#### `uninstall(package: str, keep_data: bool = False, shared: bool = False) -> str`
+#### `uninstall(package: str, keep_data: bool = False, shared: bool = False, module_name: str | None = None, version_code: str | None = None, user_id: str | None = None, list_options: bool = False) -> str`
 
 卸载应用程序。
 
 - `package`: 包名
 - `keep_data`: 保留数据和缓存目录（默认：False）
 - `shared`: 移除共享包（默认：False）
+- `module_name`: module 名（默认：None）
+- `version_code`: 版本号（默认：None）
+- `user_id`: 用户 ID（默认：None）
+- `list_options`: 列出 uninstall 选项（默认：False）
+
+安装和卸载的带值选项必须编码为同一对双引号中的 option/value 参数（例如 `"-w 180"`、`"-m entry"`）；`-cwd` 仍为两个独立参数。为保证命令安全，选项值不能包含空格、双引号、回车、换行、NUL 或 shell 注入字符。
 
 ```python
 result = client.uninstall("com.example.app")
@@ -188,10 +291,15 @@ print(result)
 logs = client.hilog()
 print(logs)
 
-# 使用过滤器
-logs = client.hilog("-t MyTag")
-print(logs)
 ```
+
+#### `jpid() -> list[str]`
+
+列出 debug/JDWP 进程 ID。
+
+#### `track_jpid(callback, include_release: bool = False, pid_only: bool = False) -> None`
+
+持续跟踪 debug/JDWP 进程变化。回调返回 `True` 继续，返回 `False` 停止。
 
 #### `wait_for_device() -> str`
 
@@ -200,6 +308,30 @@ print(logs)
 ```python
 device_id = client.wait_for_device()
 print(f"设备已连接: {device_id}")
+```
+
+#### `hilog_stream(callback, args: str | None = None) -> None`
+
+持续读取设备日志并把日志片段传给回调。回调返回 `True` 继续读取，返回 `False` 停止。
+
+```python
+def on_log(chunk: str) -> bool:
+    print(chunk, end="")
+    return True
+
+client.hilog_stream(on_log, args="-t MyTag")
+```
+
+#### `monitor_devices(callback, interval_secs: int = 2) -> None`
+
+轮询设备列表，在列表变化时调用回调。回调返回 `True` 继续监控，返回 `False` 停止。
+
+```python
+def on_devices(devices: list[str]) -> bool:
+    print(f"当前设备: {devices}")
+    return True
+
+client.monitor_devices(on_devices, interval_secs=2)
 ```
 
 ## 示例
@@ -212,41 +344,50 @@ from hdc_rs_py import HdcClient
 def main():
     # 连接到 HDC 服务器
     client = HdcClient("127.0.0.1:8710")
-    
+
     # 列出设备
     devices = client.list_targets()
     print(f"可用设备: {devices}")
-    
+
     if not devices:
         print("未找到设备")
         return
-    
+
     # 连接到第一个设备
     device_id = devices[0]
+    client = HdcClient("127.0.0.1:8710")
     client.connect_device(device_id)
     print(f"已连接到设备: {device_id}")
-    
+
     # 执行 shell 命令
     print("\n执行 shell 命令...")
     output = client.shell("ls -l /data/local/tmp")
     print(output)
-    
+
     # 文件传输
     print("\n发送文件...")
+    client = HdcClient("127.0.0.1:8710")
+    client.connect_device(device_id)
     result = client.file_send("test.txt", "/data/local/tmp/test.txt")
     print(result)
-    
+
     print("\n接收文件...")
+    client = HdcClient("127.0.0.1:8710")
+    client.connect_device(device_id)
     result = client.file_recv("/data/local/tmp/test.txt", "received.txt")
     print(result)
-    
+
     # 端口转发
     print("\n设置端口转发...")
+    client = HdcClient("127.0.0.1:8710")
+    client.connect_device(device_id)
     result = client.fport("tcp:8080", "tcp:8080")
     print(result)
-    
+
     # 获取日志
     print("\n获取设备日志...")
+    client = HdcClient("127.0.0.1:8710")
+    client.connect_device(device_id)
     logs = client.hilog()
     print(logs[:500])  # 打印前 500 个字符
 
@@ -257,10 +398,11 @@ if __name__ == "__main__":
 ### 应用管理示例
 
 ```python
-from hdc_rs_py_py_py import HdcClient
+from hdc_rs_py import HdcClient
 
 client = HdcClient("127.0.0.1:8710")
 devices = client.list_targets()
+client = HdcClient("127.0.0.1:8710")
 client.connect_device(devices[0])
 
 # 安装应用
@@ -270,6 +412,8 @@ print(result)
 
 # 卸载应用
 print("卸载应用...")
+client = HdcClient("127.0.0.1:8710")
+client.connect_device(devices[0])
 result = client.uninstall("com.example.app", keep_data=False)
 print(result)
 ```
@@ -278,27 +422,32 @@ print(result)
 
 ```python
 from hdc_rs_py import HdcClient
-import time
 
-def monitor_devices():
-    client = HdcClient("127.0.0.1:8710")
-    
-    while True:
-        devices = client.list_targets()
-        print(f"当前设备: {devices}")
-        time.sleep(5)
+def on_devices(devices: list[str]) -> bool:
+    print(f"当前设备: {devices}")
+    return True
 
 if __name__ == "__main__":
-    monitor_devices()
+    client = HdcClient("127.0.0.1:8710")
+    client.monitor_devices(on_devices, interval_secs=2)
 ```
 
 ## 开发
+
+本地验证 PyO3 绑定时建议显式设置 Python 解释器，避免 PyO3 读取不存在的 `.venv/bin/python`：
+
+```bash
+PYO3_PYTHON=$(command -v python3) cargo test --workspace --all-features
+PYO3_PYTHON=$(command -v python3) cargo clippy --workspace --all-features -- -D warnings
+```
+
+本文档中的连接、shell、文件传输、端口转发、应用、hilog 和设备监控示例都需要本机有 HDC server，并且对应命令需要已连接且授权的 HarmonyOS/OpenHarmony 设备。
 
 ### 运行测试
 
 ```bash
 # 在开发模式下构建并安装
-maturin develop
+PYO3_PYTHON=$(command -v python3) maturin develop
 
 # 运行 Python 测试
 python -m pytest tests/
@@ -308,7 +457,7 @@ python -m pytest tests/
 
 ```bash
 # 构建 release 版本
-maturin build --release
+PYO3_PYTHON=$(command -v python3) maturin build --release
 
 # 构建并发布到 PyPI
 maturin publish

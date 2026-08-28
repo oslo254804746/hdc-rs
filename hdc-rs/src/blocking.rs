@@ -47,7 +47,10 @@ impl HdcClient {
         Ok(Self { runtime, inner })
     }
 
-    /// List all connected devices
+    /// List all connected devices.
+    ///
+    /// This one-shot task disconnects the client before returning. Create a
+    /// fresh client before issuing another terminal task.
     ///
     /// # Example
     ///
@@ -65,6 +68,111 @@ impl HdcClient {
         self.runtime.block_on(self.inner.list_targets())
     }
 
+    /// List all connected devices with verbose upstream output.
+    ///
+    /// This one-shot task disconnects the client before returning. Create a
+    /// fresh client before issuing another terminal task.
+    pub fn list_targets_verbose(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.list_targets_verbose())
+    }
+
+    /// Check HDC server version/state. The client is disconnected on return.
+    pub fn check_server(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.check_server())
+    }
+
+    /// Get HDC version information. The client is disconnected on return.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hdc_rs::blocking::HdcClient;
+    ///
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
+    /// println!("{}", client.version()?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn version(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.version())
+    }
+
+    /// Get HDC help text. The client is disconnected on return.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hdc_rs::blocking::HdcClient;
+    ///
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
+    /// println!("{}", client.help(false)?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn help(&mut self, verbose: bool) -> Result<String> {
+        self.runtime.block_on(self.inner.help(verbose))
+    }
+
+    /// Ask the HDC server to discover targets. The client is disconnected on return.
+    pub fn discover(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.discover())
+    }
+
+    /// Check target device state. The client is disconnected on return.
+    pub fn check_device(&mut self, connect_key: Option<&str>) -> Result<String> {
+        self.runtime.block_on(self.inner.check_device(connect_key))
+    }
+
+    /// Connect to a target by connect key, such as `host:port`.
+    pub fn target_connect(&mut self, key: &str) -> Result<String> {
+        self.runtime.block_on(self.inner.target_connect(key))
+    }
+
+    /// Disconnect a target by connect key.
+    pub fn target_disconnect(&mut self, key: &str) -> Result<String> {
+        self.runtime.block_on(self.inner.target_disconnect(key))
+    }
+
+    /// Select any available target.
+    pub fn connect_any(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.connect_any())
+    }
+
+    /// Reconnect the current or specified target.
+    pub fn reconnect_target(&mut self, connect_key: Option<&str>) -> Result<String> {
+        self.runtime
+            .block_on(self.inner.reconnect_target(connect_key))
+    }
+
+    /// Mount the target filesystem.
+    pub fn target_mount(&mut self) -> Result<String> {
+        self.runtime.block_on(self.inner.target_mount())
+    }
+
+    /// Boot the target, optionally using an upstream boot mode.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hdc_rs::blocking::HdcClient;
+    /// use hdc_rs::TargetBootMode;
+    ///
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
+    /// client.target_boot(Some(TargetBootMode::Recovery))?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn target_boot(&mut self, mode: Option<crate::device::TargetBootMode>) -> Result<String> {
+        self.runtime.block_on(self.inner.target_boot(mode))
+    }
+
+    /// Switch daemon privilege mode.
+    pub fn smode(&mut self, enable_root: bool) -> Result<String> {
+        self.runtime.block_on(self.inner.smode(enable_root))
+    }
+
+    /// Switch daemon transport mode.
+    pub fn tmode(&mut self, mode: crate::device::TargetMode) -> Result<String> {
+        self.runtime.block_on(self.inner.tmode(mode))
+    }
+
     /// Connect to a specific device
     ///
     /// # Example
@@ -75,6 +183,7 @@ impl HdcClient {
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
     /// if !devices.is_empty() {
+    ///     let mut client = HdcClient::connect("127.0.0.1:8710")?;
     ///     client.connect_device(&devices[0])?;
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -92,6 +201,7 @@ impl HdcClient {
     ///
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// client.connect_device(&devices[0])?;
     ///
     /// let output = client.shell("ls -l")?;
@@ -104,6 +214,9 @@ impl HdcClient {
 
     /// Create a forward port mapping (local -> device)
     ///
+    /// This task drains its channel and disconnects the client on return.
+    /// Create a fresh client before issuing another terminal task.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -112,6 +225,7 @@ impl HdcClient {
     ///
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// client.connect_device(&devices[0])?;
     ///
     /// let local = ForwardNode::Tcp(8080);
@@ -130,6 +244,9 @@ impl HdcClient {
 
     /// Create a reverse port mapping (device -> local)
     ///
+    /// This task drains its channel and disconnects the client on return.
+    /// Create a fresh client before issuing another terminal task.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -138,6 +255,7 @@ impl HdcClient {
     ///
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// client.connect_device(&devices[0])?;
     ///
     /// let remote = ForwardNode::Tcp(9090);
@@ -154,6 +272,11 @@ impl HdcClient {
         self.runtime.block_on(self.inner.rport(remote, local))
     }
 
+    /// List all forward/reverse tasks using `fport ls`.
+    pub fn fport_list(&mut self) -> Result<Vec<String>> {
+        self.runtime.block_on(self.inner.fport_list())
+    }
+
     /// Remove a forward port mapping
     ///
     /// # Example
@@ -163,6 +286,7 @@ impl HdcClient {
     ///
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// client.connect_device(&devices[0])?;
     ///
     /// // Remove forward using task string (e.g., "tcp:8080 tcp:8080")
@@ -183,6 +307,7 @@ impl HdcClient {
     ///
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// client.connect_device(&devices[0])?;
     ///
     /// let packages = vec!["app.hap"];
@@ -205,6 +330,7 @@ impl HdcClient {
     ///
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// client.connect_device(&devices[0])?;
     ///
     /// let options = UninstallOptions::new();
@@ -227,6 +353,7 @@ impl HdcClient {
     ///
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// client.connect_device(&devices[0])?;
     ///
     /// let options = FileTransferOptions::default();
@@ -254,6 +381,7 @@ impl HdcClient {
     ///
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// client.connect_device(&devices[0])?;
     ///
     /// let options = FileTransferOptions::default();
@@ -280,14 +408,12 @@ impl HdcClient {
     ///
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// client.connect_device(&devices[0])?;
     ///
     /// // Get all logs
     /// let logs = client.hilog(None)?;
     /// println!("Logs: {}", logs);
-    ///
-    /// // Get logs with filter
-    /// let logs = client.hilog(Some("-t MyTag"))?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn hilog(&mut self, args: Option<&str>) -> Result<String> {
@@ -331,18 +457,13 @@ impl HdcClient {
     ///
     /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// let devices = client.list_targets()?;
+    /// let mut client = HdcClient::connect("127.0.0.1:8710")?;
     /// client.connect_device(&devices[0])?;
     ///
     /// // Stream all logs
     /// client.hilog_stream(None, |log_chunk| {
     ///     print!("{}", log_chunk);
     ///     true // Continue streaming
-    /// })?;
-    ///
-    /// // Stream with filter
-    /// client.hilog_stream(Some("-t MyTag"), |log_chunk| {
-    ///     print!("{}", log_chunk);
-    ///     true
     /// })?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -352,6 +473,25 @@ impl HdcClient {
     {
         self.runtime
             .block_on(self.inner.hilog_stream(args, callback))
+    }
+
+    /// List debug/JDWP process identifiers.
+    pub fn jpid(&mut self) -> Result<Vec<String>> {
+        self.runtime.block_on(self.inner.jpid())
+    }
+
+    /// Track debug/JDWP process changes.
+    pub fn track_jpid<F>(
+        &mut self,
+        include_release: bool,
+        pid_only: bool,
+        callback: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.runtime
+            .block_on(self.inner.track_jpid(include_release, pid_only, callback))
     }
 
     /// Monitor device list changes with callback

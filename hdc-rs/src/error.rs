@@ -25,6 +25,10 @@ pub enum HdcError {
     #[error("Not connected to HDC server")]
     NotConnected,
 
+    /// The peer closed the transport cleanly before another packet began
+    #[error("HDC server closed the connection")]
+    ConnectionClosed,
+
     /// Invalid banner received
     #[error("Invalid banner: expected 'OHOS HDC', got {0:?}")]
     InvalidBanner(Vec<u8>),
