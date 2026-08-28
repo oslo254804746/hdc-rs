@@ -297,7 +297,7 @@ impl HdcClient {
         // Device targeting is done via the connectKey in handshake, not via -t parameter
         let full_cmd = format!("shell {}", cmd);
 
-        let result = async {
+        let result: Result<String> = async {
             self.send_command(&full_cmd).await?;
 
             let data = self.read_raw_until_eof(Duration::from_secs(5)).await?;
