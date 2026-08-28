@@ -32,8 +32,10 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Test Rust crate
-        run: cargo test -p hdc-rs --all-features
+      - name: Test workspace
+        env:
+          PYO3_PYTHON: python
+        run: cargo test --workspace --all-features
 
       - name: Clippy workspace
         env:

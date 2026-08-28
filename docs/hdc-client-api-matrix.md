@@ -1,6 +1,11 @@
 # HDC Client API Matrix
 
-This matrix tracks client-facing upstream HDC commands against the Rust async API, Rust blocking API, Python API, and test coverage in this repository.
+This matrix tracks the implemented client-facing upstream HDC commands against
+the Rust async API, Rust blocking API, Python API, and test coverage in this
+repository. “Implemented” indicates that the API is exposed; it does not imply
+real-device validation. Device-dependent integration tests are ignored by
+default and require an HDC server plus an authorized HarmonyOS/OpenHarmony
+device, so CI results do not claim hardware validation.
 
 | Upstream command | Rust async API | Rust blocking API | Python API | Test coverage | Requires device | Priority |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -24,7 +29,6 @@ This matrix tracks client-facing upstream HDC commands against the Rust async AP
 | `tmode port close` | `HdcClient::tmode(TargetMode::PortClose)` | `blocking::HdcClient::tmode` | `HdcClient.tmode_port_close` | Command builder unit | Yes | High |
 | `shell <command>` | `HdcClient::shell` | `blocking::HdcClient::shell` | `HdcClient.shell` | Ignored integration | Yes | High |
 | `hilog [args]` | `HdcClient::hilog`, `hilog_stream` | `blocking::HdcClient::hilog`, `hilog_stream` | `HdcClient.hilog`, `hilog_stream` | Doc compile | Yes | High |
-| `bugreport [file]` | `HdcClient::bugreport` | `blocking::HdcClient::bugreport` | `HdcClient.bugreport` | Ignored integration | Yes | High |
 | `jpid` | `HdcClient::jpid` | `blocking::HdcClient::jpid` | `HdcClient.jpid` | Parser unit, ignored integration | Yes | High |
 | `track-jpid [-a|-p]` | `HdcClient::track_jpid` | `blocking::HdcClient::track_jpid` | `HdcClient.track_jpid` | Compile | Yes | High |
 | `file send` | `HdcClient::file_send` | `blocking::HdcClient::file_send` | `HdcClient.file_send` | Options unit, doc compile | Yes | High |
@@ -33,11 +37,8 @@ This matrix tracks client-facing upstream HDC commands against the Rust async AP
 | `fport ls` | `HdcClient::fport_list` | `blocking::HdcClient::fport_list` | `HdcClient.fport_list` | Ignored integration | No | Medium |
 | `fport rm task` | `HdcClient::fport_remove` | `blocking::HdcClient::fport_remove` | `HdcClient.fport_remove` | Ignored integration | No | Medium |
 | `rport remote local` | `HdcClient::rport` | `blocking::HdcClient::rport` | `HdcClient.rport` | Forward unit | Usually | High |
-| `rport ls` | `HdcClient::rport_list` | `blocking::HdcClient::rport_list` | `HdcClient.rport_list` | Ignored integration | No | Medium |
-| `rport rm task` | `HdcClient::rport_remove` | `blocking::HdcClient::rport_remove` | `HdcClient.rport_remove` | Ignored integration | No | Medium |
 | `install` | `HdcClient::install` | `blocking::HdcClient::install` | `HdcClient.install` | Options unit, doc compile | Yes | High |
 | `uninstall` | `HdcClient::uninstall` | `blocking::HdcClient::uninstall` | `HdcClient.uninstall` | Options unit, ignored integration | Yes | High |
-| `sideload path` | `HdcClient::sideload` | `blocking::HdcClient::sideload` | `HdcClient.sideload` | Ignored integration | Yes | Medium |
 | `start`, `kill`, `keygen` | Not exposed | Not exposed | Not exposed | Not covered | No | Conditional |
 | `update`, `flash`, `erase`, `format` | Not exposed | Not exposed | Not exposed | Not covered | Yes | Conditional |
 | `alive`, `spawn-sub`, `killall-sub` | Not exposed | Not exposed | Not exposed | Not covered | No | Low |

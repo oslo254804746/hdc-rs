@@ -1,5 +1,111 @@
 //! Application management functionality
 
+use crate::error::{HdcError, Result};
+
+/// Validate a working-directory value, which remains a separate HDC argument.
+pub(crate) fn validate_cwd_value(option: &str, value: &str) -> Result<()> {
+    if value.is_empty()
+        || value
+            .bytes()
+            .any(|byte| matches!(byte, b'"' | b'\r' | b'\n' | b'\0'))
+    {
+        return Err(HdcError::Protocol(format!(
+            "invalid {option} value: it must be non-empty and cannot contain double quotes, CR, LF, or NUL"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate a daemon/package-manager option value before quoting it.
+pub(crate) fn validate_option_value(option: &str, value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.bytes().any(|byte| {
+            byte.is_ascii_whitespace()
+                || byte.is_ascii_control()
+                || matches!(
+                    byte,
+                    b'"' | b'|' | b';' | b'&' | b'$' | b'<' | b'>' | b'`' | b'\\' | b'!'
+                )
+        })
+    {
+        return Err(HdcError::Protocol(format!(
+            "invalid {option} value: it must be non-empty and cannot contain whitespace, control, quote, or shell-injection characters"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_numeric_option_value(option: &str, value: &str) -> Result<()> {
+    validate_option_value(option, value)?;
+    if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(HdcError::Protocol(format!(
+            "invalid {option} value: only ASCII digits are allowed"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_module_name(value: &str) -> Result<()> {
+    validate_option_value("-m", value)?;
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(HdcError::Protocol(
+            "invalid -m value: only ASCII letters, digits, '.', '_', and '-' are allowed"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_package_name(value: &str) -> Result<()> {
+    if value.is_empty()
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(HdcError::Protocol(
+            "invalid package value: only ASCII letters, digits, '.', '_', and '-' are allowed"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a source/path argument and reject values that cannot be quoted.
+pub(crate) fn validate_path_argument(label: &str, value: &str) -> Result<()> {
+    if value.is_empty()
+        || value
+            .bytes()
+            .any(|byte| matches!(byte, b'"' | b'\r' | b'\n' | b'\0'))
+    {
+        return Err(HdcError::Protocol(format!(
+            "invalid {label}: it must be non-empty and cannot contain double quotes, CR, LF, or NUL"
+        )));
+    }
+    Ok(())
+}
+
+/// Render one host command argument, quoting only when it contains whitespace.
+pub(crate) fn render_hdc_argument(value: &str) -> String {
+    if value.bytes().any(|byte| byte.is_ascii_whitespace()) {
+        format!("\"{value}\"")
+    } else {
+        value.to_string()
+    }
+}
+
+/// Keep `-cwd` and its value as separate HDC arguments while preserving paths
+/// containing whitespace. The value itself is quoted only when needed.
+pub(crate) fn render_cwd_value(value: &str) -> String {
+    render_hdc_argument(value)
+}
+
+fn render_option_pair(option: &str, value: &str) -> String {
+    format!("\"{option} {value}\"")
+}
+
 /// Application install options
 #[derive(Debug, Clone, Default)]
 pub struct InstallOptions {
@@ -7,14 +113,13 @@ pub struct InstallOptions {
     pub replace: bool,
     /// Install shared bundle for multi-apps
     pub shared: bool,
-    /// Execute install relative to working directory (-cwd)
+    /// Execute install relative to working directory (-cwd). The value must
+    /// be non-empty and must not contain double quotes, CR, LF, or NUL.
     pub cwd: Option<String>,
     /// Wait time in seconds (-w)
     pub wait_time: Option<u64>,
-    /// User ID (-u)
+    /// User ID (-u), encoded as a quoted option/value argument.
     pub user_id: Option<String>,
-    /// Bundle path (-p)
-    pub bundle_path: Option<String>,
     /// List install options/help (-h)
     pub list_options: bool,
     /// Grant permissions after install (-g)
@@ -51,15 +156,9 @@ impl InstallOptions {
         self
     }
 
-    /// Set user ID
+    /// Set an ASCII-numeric user ID.
     pub fn user_id(mut self, user_id: impl Into<String>) -> Self {
         self.user_id = Some(user_id.into());
-        self
-    }
-
-    /// Set bundle path
-    pub fn bundle_path(mut self, bundle_path: impl Into<String>) -> Self {
-        self.bundle_path = Some(bundle_path.into());
         self
     }
 
@@ -75,6 +174,17 @@ impl InstallOptions {
         self
     }
 
+    /// Validate values before sending an install command.
+    pub(crate) fn validate(&self) -> Result<()> {
+        if let Some(cwd) = &self.cwd {
+            validate_cwd_value("-cwd", cwd)?;
+        }
+        if let Some(user_id) = &self.user_id {
+            validate_numeric_option_value("-u", user_id)?;
+        }
+        Ok(())
+    }
+
     /// Convert to command line flags
     pub fn to_flags(&self) -> String {
         let mut flags = Vec::new();
@@ -86,19 +196,13 @@ impl InstallOptions {
         }
         if let Some(cwd) = &self.cwd {
             flags.push("-cwd".to_string());
-            flags.push(cwd.clone());
+            flags.push(render_cwd_value(cwd));
         }
         if let Some(wait_time) = self.wait_time {
-            flags.push("-w".to_string());
-            flags.push(wait_time.to_string());
+            flags.push(format!("\"-w {wait_time}\""));
         }
         if let Some(user_id) = &self.user_id {
-            flags.push("-u".to_string());
-            flags.push(user_id.clone());
-        }
-        if let Some(bundle_path) = &self.bundle_path {
-            flags.push("-p".to_string());
-            flags.push(bundle_path.clone());
+            flags.push(render_option_pair("-u", user_id));
         }
         if self.list_options {
             flags.push("-h".to_string());
@@ -117,13 +221,11 @@ pub struct UninstallOptions {
     pub keep_data: bool,
     /// Remove shared bundle
     pub shared: bool,
-    /// Bundle name (-n)
-    pub bundle_name: Option<String>,
-    /// Module name (-m)
+    /// Module name (-m), encoded as a quoted option/value argument.
     pub module_name: Option<String>,
-    /// Version code (-v)
+    /// Version code (-v), encoded as a quoted option/value argument.
     pub version_code: Option<String>,
-    /// User ID (-u)
+    /// User ID (-u), encoded as a quoted option/value argument.
     pub user_id: Option<String>,
     /// List uninstall options/help (-h)
     pub list_options: bool,
@@ -144,12 +246,6 @@ impl UninstallOptions {
     /// Set shared option
     pub fn shared(mut self, shared: bool) -> Self {
         self.shared = shared;
-        self
-    }
-
-    /// Set bundle name
-    pub fn bundle_name(mut self, bundle_name: impl Into<String>) -> Self {
-        self.bundle_name = Some(bundle_name.into());
         self
     }
 
@@ -177,6 +273,20 @@ impl UninstallOptions {
         self
     }
 
+    /// Validate values before sending an uninstall command.
+    pub(crate) fn validate(&self) -> Result<()> {
+        if let Some(module_name) = &self.module_name {
+            validate_module_name(module_name)?;
+        }
+        if let Some(version_code) = &self.version_code {
+            validate_numeric_option_value("-v", version_code)?;
+        }
+        if let Some(user_id) = &self.user_id {
+            validate_numeric_option_value("-u", user_id)?;
+        }
+        Ok(())
+    }
+
     /// Convert to command line flags
     pub fn to_flags(&self) -> String {
         let mut flags = Vec::new();
@@ -186,21 +296,14 @@ impl UninstallOptions {
         if self.shared {
             flags.push("-s".to_string());
         }
-        if let Some(bundle_name) = &self.bundle_name {
-            flags.push("-n".to_string());
-            flags.push(bundle_name.clone());
-        }
         if let Some(module_name) = &self.module_name {
-            flags.push("-m".to_string());
-            flags.push(module_name.clone());
+            flags.push(render_option_pair("-m", module_name));
         }
         if let Some(version_code) = &self.version_code {
-            flags.push("-v".to_string());
-            flags.push(version_code.clone());
+            flags.push(render_option_pair("-v", version_code));
         }
         if let Some(user_id) = &self.user_id {
-            flags.push("-u".to_string());
-            flags.push(user_id.clone());
+            flags.push(render_option_pair("-u", user_id));
         }
         if self.list_options {
             flags.push("-h".to_string());
@@ -228,10 +331,15 @@ mod tests {
             .cwd("/tmp")
             .wait_time(30)
             .user_id("100")
-            .bundle_path("/data/app")
             .list_options(true)
             .grant_permissions(true);
-        assert_eq!(opts.to_flags(), "-cwd /tmp -w 30 -u 100 -p /data/app -h -g");
+        assert_eq!(opts.to_flags(), "-cwd /tmp \"-w 30\" \"-u 100\" -h -g");
+
+        let opts = InstallOptions::new().cwd("/tmp/work dir");
+        assert_eq!(opts.to_flags(), "-cwd \"/tmp/work dir\"");
+
+        let opts = InstallOptions::new().wait_time(180);
+        assert_eq!(opts.to_flags(), "\"-w 180\"");
     }
 
     #[test]
@@ -246,14 +354,44 @@ mod tests {
     #[test]
     fn test_uninstall_options_extended_flags() {
         let opts = UninstallOptions::new()
-            .bundle_name("com.example.app")
             .module_name("entry")
             .version_code("42")
             .user_id("100")
             .list_options(true);
-        assert_eq!(
-            opts.to_flags(),
-            "-n com.example.app -m entry -v 42 -u 100 -h"
-        );
+        assert_eq!(opts.to_flags(), "\"-m entry\" \"-v 42\" \"-u 100\" -h");
+
+        let opts = UninstallOptions::new()
+            .module_name("entry_module")
+            .version_code("42")
+            .user_id("100");
+        assert_eq!(opts.to_flags(), "\"-m entry_module\" \"-v 42\" \"-u 100\"");
+    }
+
+    #[test]
+    fn reject_unsafe_option_values() {
+        for value in ["bad\"value", "bad\nvalue", "bad\rvalue", "bad\0value"] {
+            assert!(InstallOptions::new().user_id(value).validate().is_err());
+            assert!(UninstallOptions::new()
+                .module_name(value)
+                .validate()
+                .is_err());
+        }
+
+        assert!(InstallOptions::new().cwd("safe value").validate().is_ok());
+        assert!(InstallOptions::new().user_id("100").validate().is_ok());
+        assert!(InstallOptions::new().user_id("10 0").validate().is_err());
+        assert!(UninstallOptions::new()
+            .module_name("entry")
+            .validate()
+            .is_ok());
+        assert!(UninstallOptions::new()
+            .module_name("entry module")
+            .validate()
+            .is_err());
+        assert!(UninstallOptions::new()
+            .version_code("42")
+            .user_id("100")
+            .validate()
+            .is_ok());
     }
 }

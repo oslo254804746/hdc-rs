@@ -176,7 +176,8 @@ impl HdcCommand {
     pub fn is_response(&self) -> bool {
         matches!(
             self,
-            Self::ShellData
+            Self::CheckServer
+                | Self::ShellData
                 | Self::FileData
                 | Self::FileFinish
                 | Self::ForwardData
@@ -298,5 +299,11 @@ mod tests {
         assert_eq!(HdcCommand::from_u16(3), None);
         assert_eq!(HdcCommand::from_u16(19), None);
         assert_eq!(HdcCommand::from_u16(u16::MAX), None);
+    }
+
+    #[test]
+    fn only_check_server_is_a_core_response_prefix() {
+        assert!(HdcCommand::CheckServer.is_response());
+        assert!(!HdcCommand::CheckDevice.is_response());
     }
 }

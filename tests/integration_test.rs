@@ -99,9 +99,6 @@ async fn test_debug_commands() {
         .await
         .expect("Failed to connect to device");
 
-    let bugreport = client.bugreport(None).await;
-    info!("bugreport result: {:?}", bugreport);
-
     let jpids = client.jpid().await;
     info!("jpid result: {:?}", jpids);
 }

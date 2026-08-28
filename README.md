@@ -4,6 +4,9 @@
 [![Documentation](https://docs.rs/hdc-rs/badge.svg)](https://docs.rs/hdc-rs)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 [![Rust Version](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust Validation](https://github.com/oslo254804746/hdc-rs/actions/workflows/rust-validation.yml/badge.svg?branch=master)](https://github.com/oslo254804746/hdc-rs/actions/workflows/rust-validation.yml)
+
+**Release:** 0.2.0 · **Status:** Beta
 
 A pure Rust implementation of the **HarmonyOS Device Connector (HDC)** client library, providing both async and blocking APIs for interacting with HarmonyOS/OpenHarmony devices.
 
@@ -59,7 +62,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-hdc-rs = "0.1"
+hdc-rs = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -69,7 +72,7 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 [dependencies]
-hdc-rs = { version = "0.1", features = ["blocking"] }
+hdc-rs = { version = "0.2", features = ["blocking"] }
 ```
 
 ## 🚀 Quick Start
@@ -83,24 +86,25 @@ use hdc_rs::HdcClient;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to HDC server
     let mut client = HdcClient::connect("127.0.0.1:8710").await?;
-    
+
     // List connected devices
     let devices = client.list_targets().await?;
     println!("Devices: {:?}", devices);
-    
+
     if devices.is_empty() {
         println!("No devices connected!");
         return Ok(());
     }
-    
+
     // Select and connect to first device
+    let mut client = HdcClient::connect("127.0.0.1:8710").await?;
     client.connect_device(&devices[0]).await?;
     println!("Connected to device: {}", devices[0]);
-    
+
     // Execute shell command on the selected device
     let output = client.shell("ls -l /data").await?;
     println!("Output:\n{}", output);
-    
+
     Ok(())
 }
 ```
@@ -111,7 +115,7 @@ Enable the `blocking` feature for synchronous API:
 
 ```toml
 [dependencies]
-hdc-rs = { version = "0.1", features = ["blocking"] }
+hdc-rs = { version = "0.2", features = ["blocking"] }
 ```
 
 ```rust
@@ -120,18 +124,19 @@ use hdc_rs::blocking::HdcClient;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to HDC server (synchronous!)
     let mut client = HdcClient::connect("127.0.0.1:8710")?;
-    
+
     // List connected devices
     let devices = client.list_targets()?;
     println!("Devices: {:?}", devices);
-    
+
     if !devices.is_empty() {
         // Connect and execute command
+        let mut client = HdcClient::connect("127.0.0.1:8710")?;
         client.connect_device(&devices[0])?;
         let output = client.shell("uname -a")?;
         println!("Output: {}", output);
     }
-    
+
     Ok(())
 }
 ```
@@ -210,6 +215,8 @@ use hdc_rs::HdcClient;
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.target_connect("192.168.0.2:10178").await?;
+
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.target_disconnect("192.168.0.2:10178").await?;
 # Ok(())
 # }
@@ -223,23 +230,28 @@ use hdc_rs::{HdcClient, TargetBootMode, TargetMode};
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.target_mount().await?;
+
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.target_boot(Some(TargetBootMode::Recovery)).await?;
+
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.smode(true).await?;
+
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.tmode(TargetMode::Port(Some(10178))).await?;
 # Ok(())
 # }
 ```
 
-Collect diagnostics and debug process identifiers:
+List debug process identifiers:
 
 ```rust
 use hdc_rs::HdcClient;
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 let mut client = HdcClient::connect("127.0.0.1:8710").await?;
-let report = client.bugreport(None).await?;
 let jpids = client.jpid().await?;
-println!("{} {:?}", report, jpids);
+println!("{:?}", jpids);
 # Ok(())
 # }
 ```
@@ -257,6 +269,7 @@ let file_opts = FileTransferOptions::new()
     .cwd("/data/local/tmp");
 client.file_send("local.txt", "remote.txt", file_opts).await?;
 
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 let install_opts = InstallOptions::new()
     .replace(true)
     .cwd("/tmp")
@@ -264,6 +277,7 @@ let install_opts = InstallOptions::new()
     .grant_permissions(true);
 client.install(&["app.hap"], install_opts).await?;
 
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 let uninstall_opts = UninstallOptions::new()
     .keep_data(true)
     .user_id("100");
@@ -273,6 +287,11 @@ client.uninstall("com.example.app", uninstall_opts).await?;
 ```
 
 See [docs/hdc-client-api-matrix.md](docs/hdc-client-api-matrix.md) for the async, blocking, and Python API coverage matrix.
+
+The matrix distinguishes implemented API surface from device validation. Rows
+that require a device are covered only by ignored integration tests and need a
+running HDC server plus an authorized HarmonyOS/OpenHarmony device; CI does not
+claim real-device validation for those rows.
 
 ## 🏗️ Architecture
 
@@ -383,6 +402,11 @@ Client                           Server
 | `hilog` | Stream device logs | ✅ Implemented |
 | `wait-for-device` | Wait for device | ✅ Implemented |
 
+“Implemented” means the client API is exposed; it is separate from real-device
+validation. Device-dependent integration tests are ignored by default and
+require a running HDC server plus an authorized HarmonyOS/OpenHarmony device.
+CI does not claim hardware validation for these commands.
+
 ## 🐍 Python Bindings
 
 This project includes Python bindings built with PyO3. See [`hdc-rs-py/README.md`](hdc-rs-py/README.md) for complete documentation.
@@ -399,6 +423,7 @@ print(f"Devices: {devices}")
 
 if devices:
     # Execute command
+    client = HdcClient("127.0.0.1:8710")
     client.connect_device(devices[0])
     output = client.shell("uname -a")
     print(output)
@@ -437,6 +462,24 @@ Main client for HDC communication.
   - `interval`: Polling interval (e.g., `Duration::from_secs(2)`)
   - `callback`: Function called when device list changes, return `false` to stop
 
+The one-shot local tasks `list_targets()`, `list_targets_verbose()`,
+`check_server()`, `version()`, `help()`, `discover()`, and `check_device()` drain
+their channel and disconnect before returning. Create a fresh client before a
+subsequent terminal task. `wait_for_device()` retains its continuous wait
+semantics.
+
+#### Target Control
+
+- `target_connect(key)` / `target_disconnect(key)` - Connect or disconnect a TCP/manual target
+- `connect_any()` / `reconnect_target(key)` - Select or reconnect a target
+- `target_mount()` - Mount the target filesystem
+- `target_boot(mode)` - Boot the target with an optional upstream mode
+- `smode(enable_root)` - Switch daemon privilege mode
+- `tmode(mode)` - Switch target transport mode
+
+The target-control task methods consume their channel and leave the client
+disconnected when they return. Reconnect before issuing another terminal task.
+
 #### Command Execution
 
 - `shell(cmd)` - Execute shell command on the currently selected device
@@ -454,6 +497,11 @@ Main client for HDC communication.
 - `fport_remove(task_str)` - Remove a forward task by task string
   - Example: `fport_remove("tcp:8080 tcp:8081")`
 
+Creating an `fport()` or `rport()` mapping drains the terminal task and
+disconnects the client on return. Reconnect before issuing another terminal
+task; `fport_list()` and `fport_remove()` use their own temporary server
+connections.
+
 **Forward Node Types:**
 - `ForwardNode::Tcp(port)` - TCP port
 - `ForwardNode::LocalFilesystem(path)` - Unix domain socket (filesystem)
@@ -467,14 +515,30 @@ Main client for HDC communication.
 
 - `install(paths, options)` - Install application package(s)
   - `paths`: Single or multiple `.hap`/`.hsp` files or directories
-  - `options`: `InstallOptions::new().replace(true).shared(false)`
+  - `options`: `InstallOptions::new().replace(true).cwd("/tmp").wait_time(180).user_id("100").list_options(false).grant_permissions(true)`
     - `replace`: Replace existing application
     - `shared`: Install shared bundle for multi-apps
+    - `cwd`: Install working directory
+    - `wait_time`: Wait time in seconds (`-w`)
+    - `user_id`: Numeric user ID (`-u`)
+    - `list_options`: Request install option help (`-h`)
+    - `grant_permissions`: Grant permissions after install (`-g`)
 - `uninstall(package, options)` - Uninstall application package
-  - `package`: Package name (e.g., `"com.example.app"`)
-  - `options`: `UninstallOptions::new().keep_data(true).shared(false)`
+  - `package`: Package name passed as the upstream `-n` option (e.g., `"com.example.app"`)
+  - `options`: `UninstallOptions::new().keep_data(true).shared(false).module_name("entry").version_code("42").user_id("100").list_options(false)`
     - `keep_data`: Keep the data and cache directories
     - `shared`: Remove shared bundle
+    - `module_name`: Module name (`-m`)
+    - `version_code`: Numeric version code (`-v`)
+    - `user_id`: Numeric user ID (`-u`)
+    - `list_options`: Request uninstall option help (`-h`)
+
+Install/uninstall daemon option/value pairs must each be encoded in one quoted
+HDC argument (for example, `"-w 180"` or `"-m entry"`). The `-cwd` option
+remains two separate arguments and may contain spaces when host-quoted. Numeric
+and module option values must be non-empty and safe for the HDC command parser;
+they cannot contain whitespace, control characters, quotes, or shell-injection
+characters.
 
 #### Log Management
 
@@ -499,10 +563,8 @@ Main client for HDC communication.
 - `sync_mode(bool)` - Only update if source is newer (`-sync`)
 - `compress(bool)` - Compress during transfer (`-z`)
 - `mode_sync(bool)` - Sync file permissions (`-m`)
-- `debug_dir(bool)` - Transfer to/from debug app directory (`-b`)am device logs continuously
-  - `args`: Optional hilog arguments
-  - `callback`: Function called for each log chunk, return `false` to stop streaming
-  - Useful for real-time log monitoring
+- `debug_dir(bool)` - Transfer to/from debug app directory (`-b`)
+- `cwd(path)` - Run the transfer relative to a working directory (`-cwd`)
 
 ### Usage Pattern
 
@@ -512,6 +574,7 @@ let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 let devices = client.list_targets().await?;
 
 // Connect to device - this re-establishes connection with device ID in handshake
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.connect_device(&devices[0]).await?;
 
 // Now shell commands will be routed to the selected device
@@ -524,6 +587,7 @@ let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 let devices = client.list_targets().await?;
 
 // Execute on specific device without selecting
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 let output = client.shell_on_device(&devices[0], "ls /data").await?;
 ```
 
@@ -533,6 +597,7 @@ use hdc_rs::{HdcClient, ForwardNode};
 
 let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 let devices = client.list_targets().await?;
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.connect_device(&devices[0]).await?;
 
 // Forward local TCP 8080 to device TCP 8081
@@ -554,6 +619,7 @@ use hdc_rs::{HdcClient, InstallOptions, UninstallOptions};
 
 let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 let devices = client.list_targets().await?;
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.connect_device(&devices[0]).await?;
 
 // Install app (replace if exists)
@@ -561,6 +627,8 @@ let opts = InstallOptions::new().replace(true);
 client.install(&["app.hap"], opts).await?;
 
 // Uninstall app (keep data)
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+client.connect_device(&devices[0]).await?;
 let opts = UninstallOptions::new().keep_data(true);
 client.uninstall("com.example.app", opts).await?;
 ```
@@ -571,15 +639,23 @@ use hdc_rs::HdcClient;
 
 let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 let devices = client.list_targets().await?;
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.connect_device(&devices[0]).await?;
 
 // Get logs as buffered string
 let logs = client.hilog(Some("-t app")).await?;
 println!("App logs:\n{}", logs);
 
-// Stream logs continuously
-client.hilog_stream(None, |log_chunk| {
-   
+// Stream logs on a fresh channel
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+client.connect_device(&devices[0]).await?;
+client
+    .hilog_stream(None, |log_chunk| {
+        println!("{}", log_chunk);
+        false
+    })
+    .await?;
+```
 
 **Option 6: Monitor device connections**
 ```rust
@@ -608,6 +684,7 @@ use hdc_rs::{HdcClient, FileTransferOptions};
 
 let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 let devices = client.list_targets().await?;
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
 client.connect_device(&devices[0]).await?;
 
 // Send file to device with options
@@ -617,11 +694,10 @@ let opts = FileTransferOptions::new()
 client.file_send("local.txt", "/data/local/tmp/remote.txt", opts).await?;
 
 // Receive file from device
+let mut client = HdcClient::connect("127.0.0.1:8710").await?;
+client.connect_device(&devices[0]).await?;
 let opts = FileTransferOptions::new().sync_mode(true);
 client.file_recv("/data/local/tmp/remote.txt", "local.txt", opts).await?;
-``` print!("{}", log_chunk);
-    true // Continue streaming, return false to stop
-}).await?;
 ```
 
 ### Error Handling
@@ -635,19 +711,20 @@ match client.shell("ls").await {
     Ok(output) => println!("{}", output),
     Err(HdcError::NotConnected) => eprintln!("Not connected to HDC server!"),
     Err(HdcError::Timeout) => eprintln!("Command timeout!"),
-    Err(HdcError::DeviceNotFound) => eprintln!("Device not found!"),
-    Err(HdcError::ProtocolError(msg)) => eprintln!("Protocol error: {}", msg),
+    Err(HdcError::DeviceNotFound(_)) => eprintln!("Device not found!"),
+    Err(HdcError::Protocol(msg)) => eprintln!("Protocol error: {}", msg),
     Err(e) => eprintln!("Error: {}", e),
 }
 ```
 
 **Available Error Types:**
 - `NotConnected` - Not connected to HDC server
+- `ConnectionClosed` - HDC server closed the transport cleanly
 - `Timeout` - Operation timeout
 - `DeviceNotFound` - Target device not found
-- `ProtocolError` - Protocol-level error
-- `IoError` - I/O error (network, file, etc.)
-- `InvalidResponse` - Invalid server response
+- `Protocol` - Protocol-level error
+- `Io` - I/O error (network, file, etc.)
+- `InvalidBanner` - Invalid server banner
 - `CommandFailed` - Command execution failed
 
 ## 💻 Development
@@ -674,15 +751,14 @@ match client.shell("ls").await {
 - TCP connection management
 - Packet codec (length-prefixed protocol)
 - Channel handshake
-- Basic commands: `list targets`, `shell`, `checkserver`
+- Device management and target control commands
+- Shell commands, file transfer, port forwarding, and app management
+- Hilog and JDWP process tracking
 - Error handling
-- Async/await support
+- Async, blocking, and Python APIs
 
 ### Planned 🚧
 
-- File transfer (`file send`, `file recv`)
-- Port forwarding (`fport`, `rport`)
-- App install/uninstall
 - USB connection support
 - Encryption (TLS-PSK)
 
@@ -799,7 +875,7 @@ cargo doc --all-features --no-deps --open
 
 #### Protocol errors
 
-**Symptoms:** `HdcError::ProtocolError` or unexpected responses
+**Symptoms:** `HdcError::Protocol` or unexpected responses
 
 **Solution:**
 - Ensure HDC server version compatibility (tested with 3.2.0+)
@@ -809,7 +885,7 @@ cargo doc --all-features --no-deps --open
 
 #### File transfer fails
 
-**Symptoms:** `HdcError::IoError` during file operations
+**Symptoms:** `HdcError::Io` during file operations
 
 **Solution:**
 - Verify file paths are correct
@@ -864,7 +940,7 @@ Typical performance on a modern system:
 
 ## 🗺️ Roadmap
 
-### Current Status (v0.1.0)
+### Current Status (v0.2.0)
 
 - ✅ TCP connection management
 - ✅ Async/await API
@@ -964,12 +1040,12 @@ You may choose either license for your use.
 
 ## 📈 Project Status
 
-![Build Status](https://img.shields.io/github/actions/workflow/status/oslo254804746/hdc-rs/ci.yml?branch=main)
+![Rust Validation](https://github.com/oslo254804746/hdc-rs/actions/workflows/rust-validation.yml/badge.svg?branch=master)
 ![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)
 ![Rust Version](https://img.shields.io/badge/rust-1.70%2B-orange.svg)
 
-**Version:** 0.1.0  
-**Status:** Active Development  
+**Version:** 0.2.0
+**Status:** Active Development
 **Stability:** Beta
 
 ---

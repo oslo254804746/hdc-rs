@@ -2,6 +2,8 @@
 
 这是 hdc-rs 的 Python 绑定，提供了 HarmonyOS Device Connector (HDC) 客户端的 Python 接口。
 
+当前版本：0.2.0
+
 ## 安装
 
 ### 从源码构建
@@ -38,8 +40,9 @@ print(f"设备列表: {devices}")
 
 if devices:
     # 连接到第一个设备
+    client = HdcClient("127.0.0.1:8710")
     client.connect_device(devices[0])
-    
+
     # 执行 shell 命令
     output = client.shell("ls -l /data")
     print(output)
@@ -92,12 +95,19 @@ print(devices)  # ['FMR0223C13000649']
 
 检查当前或指定设备状态。
 
+`list_targets()`、`list_targets_verbose()`、`check_server()`、`version()`、
+`help()`、`discover()` 和 `check_device()` 都是一次性任务；调用返回后该
+客户端已断开。若要继续执行另一项终端任务，请创建新的 `HdcClient`。
+
 #### `target_connect(key: str) -> str` / `target_disconnect(key: str) -> str`
 
 连接或断开 TCP/manual 目标。
 
 ```python
+client = HdcClient("127.0.0.1:8710")
 client.target_connect("192.168.0.2:10178")
+
+client = HdcClient("127.0.0.1:8710")
 client.target_disconnect("192.168.0.2:10178")
 ```
 
@@ -137,6 +147,8 @@ print(output)
 #### `tmode_usb() -> str` / `tmode_port(port: int | None = None) -> str` / `tmode_port_close() -> str`
 
 切换 target transport 模式。
+
+这些 target-control task 会消耗当前 channel，返回后需要重新创建客户端再执行下一个 terminal task。shell、文件传输、应用管理和 hilog 任务也遵循相同的生命周期。
 
 #### `file_send(local_path: str, remote_path: str, compress: bool = False, hold_timestamp: bool = False, sync_mode: bool = False, mode_sync: bool = False, debug_dir: bool = False, cwd: str | None = None) -> str`
 
@@ -214,13 +226,13 @@ result = client.rport("tcp:9090", "tcp:9090")
 print(result)
 ```
 
-#### `fport_list() -> list[str]` / `rport_list() -> list[str]`
+创建 `fport()` 或 `rport()` 后该客户端连接已关闭；如需继续执行其他终端
+任务，请创建新的 `HdcClient`。`fport_list()` 和 `fport_remove()` 使用独立
+的临时 server 连接。
 
-列出端口转发任务。
+#### `fport_list() -> list[str]`
 
-#### `rport_remove(task_str: str) -> str`
-
-移除反向端口转发。
+列出所有端口转发任务（包括正向和反向）。
 
 #### `fport_remove(task_str: str) -> str`
 
@@ -231,7 +243,7 @@ result = client.fport_remove("tcp:8080 tcp:8080")
 print(result)
 ```
 
-#### `install(packages: list[str], replace: bool = False, shared: bool = False, cwd: str | None = None, wait_time: int | None = None, user_id: str | None = None, bundle_path: str | None = None, list_options: bool = False, grant_permissions: bool = False) -> str`
+#### `install(packages: list[str], replace: bool = False, shared: bool = False, cwd: str | None = None, wait_time: int | None = None, user_id: str | None = None, list_options: bool = False, grant_permissions: bool = False) -> str`
 
 安装应用程序。
 
@@ -241,7 +253,6 @@ print(result)
 - `cwd`: 工作目录（默认：None）
 - `wait_time`: 等待时间（默认：None）
 - `user_id`: 用户 ID（默认：None）
-- `bundle_path`: bundle 路径（默认：None）
 - `list_options`: 列出 install 选项（默认：False）
 - `grant_permissions`: 安装后授予权限（默认：False）
 
@@ -250,22 +261,19 @@ result = client.install(["app.hap"], replace=True, wait_time=30, grant_permissio
 print(result)
 ```
 
-#### `sideload(path: str) -> str`
-
-执行 `sideload path`。
-
-#### `uninstall(package: str, keep_data: bool = False, shared: bool = False, bundle_name: str | None = None, module_name: str | None = None, version_code: str | None = None, user_id: str | None = None, list_options: bool = False) -> str`
+#### `uninstall(package: str, keep_data: bool = False, shared: bool = False, module_name: str | None = None, version_code: str | None = None, user_id: str | None = None, list_options: bool = False) -> str`
 
 卸载应用程序。
 
 - `package`: 包名
 - `keep_data`: 保留数据和缓存目录（默认：False）
 - `shared`: 移除共享包（默认：False）
-- `bundle_name`: bundle 名（默认：None）
 - `module_name`: module 名（默认：None）
 - `version_code`: 版本号（默认：None）
 - `user_id`: 用户 ID（默认：None）
 - `list_options`: 列出 uninstall 选项（默认：False）
+
+安装和卸载的带值选项必须编码为同一对双引号中的 option/value 参数（例如 `"-w 180"`、`"-m entry"`）；`-cwd` 仍为两个独立参数。为保证命令安全，选项值不能包含空格、双引号、回车、换行、NUL 或 shell 注入字符。
 
 ```python
 result = client.uninstall("com.example.app")
@@ -283,14 +291,7 @@ print(result)
 logs = client.hilog()
 print(logs)
 
-# 使用过滤器
-logs = client.hilog("-t MyTag")
-print(logs)
 ```
-
-#### `bugreport(output_file: str | None = None) -> str`
-
-收集 bugreport。
 
 #### `jpid() -> list[str]`
 
@@ -343,41 +344,50 @@ from hdc_rs_py import HdcClient
 def main():
     # 连接到 HDC 服务器
     client = HdcClient("127.0.0.1:8710")
-    
+
     # 列出设备
     devices = client.list_targets()
     print(f"可用设备: {devices}")
-    
+
     if not devices:
         print("未找到设备")
         return
-    
+
     # 连接到第一个设备
     device_id = devices[0]
+    client = HdcClient("127.0.0.1:8710")
     client.connect_device(device_id)
     print(f"已连接到设备: {device_id}")
-    
+
     # 执行 shell 命令
     print("\n执行 shell 命令...")
     output = client.shell("ls -l /data/local/tmp")
     print(output)
-    
+
     # 文件传输
     print("\n发送文件...")
+    client = HdcClient("127.0.0.1:8710")
+    client.connect_device(device_id)
     result = client.file_send("test.txt", "/data/local/tmp/test.txt")
     print(result)
-    
+
     print("\n接收文件...")
+    client = HdcClient("127.0.0.1:8710")
+    client.connect_device(device_id)
     result = client.file_recv("/data/local/tmp/test.txt", "received.txt")
     print(result)
-    
+
     # 端口转发
     print("\n设置端口转发...")
+    client = HdcClient("127.0.0.1:8710")
+    client.connect_device(device_id)
     result = client.fport("tcp:8080", "tcp:8080")
     print(result)
-    
+
     # 获取日志
     print("\n获取设备日志...")
+    client = HdcClient("127.0.0.1:8710")
+    client.connect_device(device_id)
     logs = client.hilog()
     print(logs[:500])  # 打印前 500 个字符
 
@@ -392,6 +402,7 @@ from hdc_rs_py import HdcClient
 
 client = HdcClient("127.0.0.1:8710")
 devices = client.list_targets()
+client = HdcClient("127.0.0.1:8710")
 client.connect_device(devices[0])
 
 # 安装应用
@@ -401,6 +412,8 @@ print(result)
 
 # 卸载应用
 print("卸载应用...")
+client = HdcClient("127.0.0.1:8710")
+client.connect_device(devices[0])
 result = client.uninstall("com.example.app", keep_data=False)
 print(result)
 ```

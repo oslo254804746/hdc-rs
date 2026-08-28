@@ -20,6 +20,30 @@ fn parse_jpid_response(response: &str) -> Vec<String> {
         .collect()
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ResponseFrame {
+    Data(Vec<u8>),
+    ChannelClose,
+}
+
+fn decode_response_frame(data: Vec<u8>) -> ResponseFrame {
+    if data.len() >= 2 {
+        let cmd_code = u16::from_le_bytes([data[0], data[1]]);
+        if let Some(command) = HdcCommand::from_u16(cmd_code) {
+            if command == HdcCommand::KernelChannelClose {
+                debug!("Received channel-close frame");
+                return ResponseFrame::ChannelClose;
+            }
+            if command.is_response() {
+                debug!("Response has command prefix: {:?}", command);
+                return ResponseFrame::Data(data[2..].to_vec());
+            }
+        }
+    }
+
+    ResponseFrame::Data(data)
+}
+
 /// HDC client for communicating with HDC server
 pub struct HdcClient {
     /// TCP stream to HDC server
@@ -138,6 +162,12 @@ impl HdcClient {
         self.handshake_ok && self.stream.is_some()
     }
 
+    /// Drop a channel after commands that consume their connection.
+    fn invalidate_connection(&mut self) {
+        self.stream = None;
+        self.handshake_ok = false;
+    }
+
     /// Send raw command string to server
     ///
     /// This is used for simple commands like "list targets", "shell ls", etc.
@@ -169,25 +199,83 @@ impl HdcClient {
         Ok(data)
     }
 
-    /// Read response as string
-    pub async fn read_response_string(&mut self) -> Result<String> {
-        let data = self.read_response().await?;
+    async fn read_response_frame(&mut self) -> Result<ResponseFrame> {
+        Ok(decode_response_frame(self.read_response().await?))
+    }
 
-        if data.is_empty() {
-            return Ok(String::new());
-        }
+    /// Read raw response frames until the transport reaches EOF.
+    ///
+    /// Empty frames are ignored. A clean transport close ends the read
+    /// normally; framing errors (including a truncated packet), other I/O
+    /// errors, and timeouts are returned to the caller, which must invalidate
+    /// the channel before returning to its user.
+    async fn read_raw_until_eof(&mut self, frame_timeout: Duration) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
 
-        // Check if there's a command prefix (2 bytes)
-        if data.len() >= 2 {
-            let cmd_code = u16::from_le_bytes([data[0], data[1]]);
-            if let Some(cmd) = HdcCommand::from_u16(cmd_code) {
-                debug!("Response has command prefix: {:?}", cmd);
-                // Skip command bytes
-                return Ok(String::from_utf8(data[2..].to_vec())?);
+        loop {
+            match timeout(frame_timeout, self.read_response()).await {
+                Ok(Ok(data)) => output.extend_from_slice(&data),
+                Ok(Err(HdcError::ConnectionClosed)) => break,
+                Ok(Err(error)) => return Err(error),
+                Err(_) => return Err(HdcError::Timeout),
             }
         }
 
-        Ok(String::from_utf8(data)?)
+        Ok(output)
+    }
+
+    /// Read a task response until the server closes the channel.
+    async fn read_until_channel_end(&mut self, frame_timeout: Duration) -> Result<String> {
+        let mut output = Vec::new();
+
+        loop {
+            let frame = match timeout(frame_timeout, self.read_response_frame()).await {
+                Ok(Ok(frame)) => frame,
+                Ok(Err(HdcError::ConnectionClosed)) => break,
+                Ok(Err(error)) => return Err(error),
+                Err(_) => return Err(HdcError::Timeout),
+            };
+
+            match frame {
+                ResponseFrame::ChannelClose => break,
+                ResponseFrame::Data(data) => output.extend_from_slice(&data),
+            }
+        }
+
+        Ok(String::from_utf8(output)?)
+    }
+
+    async fn run_terminal_command(
+        &mut self,
+        command: &str,
+        frame_timeout: Duration,
+    ) -> Result<String> {
+        let result = async {
+            self.send_command(command).await?;
+            self.read_until_channel_end(frame_timeout).await
+        }
+        .await;
+        self.invalidate_connection();
+        result
+    }
+
+    /// Read response as string
+    pub async fn read_response_string(&mut self) -> Result<String> {
+        let frame = match self.read_response_frame().await {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.invalidate_connection();
+                return Err(error);
+            }
+        };
+
+        match frame {
+            ResponseFrame::ChannelClose => {
+                self.invalidate_connection();
+                Ok(String::new())
+            }
+            ResponseFrame::Data(data) => Ok(String::from_utf8(data)?),
+        }
     }
 
     /// Execute a shell command and return output
@@ -209,24 +297,17 @@ impl HdcClient {
         // Device targeting is done via the connectKey in handshake, not via -t parameter
         let full_cmd = format!("shell {}", cmd);
 
-        self.send_command(&full_cmd).await?;
+        let result = async {
+            self.send_command(&full_cmd).await?;
 
-        // For shell commands, HDC server sends a single response packet with raw output data
-        // No command code prefix, just the plain output
-        let output = match timeout(Duration::from_secs(5), self.read_response()).await {
-            Ok(Ok(data)) => {
-                debug!("Shell response: {} bytes", data.len());
-                String::from_utf8_lossy(&data).to_string()
-            }
-            Ok(Err(e)) => {
-                debug!("Error reading shell response: {}", e);
-                return Err(e);
-            }
-            Err(_) => {
-                warn!("Timeout reading shell response");
-                return Err(HdcError::Timeout);
-            }
-        };
+            let data = self.read_raw_until_eof(Duration::from_secs(5)).await?;
+            debug!("Shell response: {} bytes", data.len());
+            Ok(String::from_utf8_lossy(&data).to_string())
+        }
+        .await;
+
+        self.invalidate_connection();
+        let output = result?;
 
         // Shell command consumes the channel - reconnect if we had a device
         if let Some(device) = device_id {
@@ -240,13 +321,16 @@ impl HdcClient {
         Ok(output)
     }
 
-    /// List connected devices/targets
+    /// List connected devices/targets.
+    ///
+    /// This one-shot task drains its response and disconnects the client before
+    /// returning. Create a fresh client before issuing another terminal task.
     pub async fn list_targets(&mut self) -> Result<Vec<String>> {
         info!("Listing targets");
 
-        self.send_command("list targets").await?;
-
-        let response = self.read_response_string().await?;
+        let response = self
+            .run_terminal_command("list targets", Duration::from_secs(30))
+            .await?;
         debug!("List targets response: {}", response);
 
         // Parse device list (format: one device per line)
@@ -263,6 +347,9 @@ impl HdcClient {
 
     /// List connected targets with verbose upstream output.
     ///
+    /// This one-shot task drains its response and disconnects the client before
+    /// returning. Create a fresh client before issuing another terminal task.
+    ///
     /// # Example
     /// ```no_run
     /// # use hdc_rs::HdcClient;
@@ -274,8 +361,8 @@ impl HdcClient {
     /// # }
     /// ```
     pub async fn list_targets_verbose(&mut self) -> Result<String> {
-        self.send_command("list targets -v").await?;
-        self.read_response_string().await
+        self.run_terminal_command("list targets -v", Duration::from_secs(30))
+            .await
     }
 
     // pub async fn get_device_stream(&self, device_id: &str) -> Result<HdcClient>{
@@ -324,18 +411,25 @@ impl HdcClient {
         Ok(())
     }
 
-    /// Check server version
+    /// Check server version.
+    ///
+    /// This one-shot task drains its response and disconnects the client before
+    /// returning. Create a fresh client before issuing another terminal task.
     pub async fn check_server(&mut self) -> Result<String> {
         info!("Checking server version");
 
-        self.send_command("checkserver").await?;
-        let response = self.read_response_string().await?;
+        let response = self
+            .run_terminal_command("checkserver", Duration::from_secs(30))
+            .await?;
 
         debug!("Server version: {}", response);
         Ok(response)
     }
 
     /// Get HDC server/client protocol version information.
+    ///
+    /// This one-shot task drains its response and disconnects the client before
+    /// returning. Create a fresh client before issuing another terminal task.
     ///
     /// # Example
     /// ```no_run
@@ -348,11 +442,14 @@ impl HdcClient {
     /// # }
     /// ```
     pub async fn version(&mut self) -> Result<String> {
-        self.send_command("version").await?;
-        self.read_response_string().await
+        self.run_terminal_command("version", Duration::from_secs(30))
+            .await
     }
 
     /// Get HDC help text.
+    ///
+    /// This one-shot task drains its response and disconnects the client before
+    /// returning. Create a fresh client before issuing another terminal task.
     ///
     /// # Example
     /// ```no_run
@@ -360,18 +457,20 @@ impl HdcClient {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let mut client = HdcClient::connect("127.0.0.1:8710").await?;
     /// let help = client.help(false).await?;
-    /// let verbose_help = client.help(true).await?;
-    /// println!("{}\n{}", help, verbose_help);
+    /// println!("{}", help);
     /// # Ok(())
     /// # }
     /// ```
     pub async fn help(&mut self, verbose: bool) -> Result<String> {
         let cmd = if verbose { "help verbose" } else { "help" };
-        self.send_command(cmd).await?;
-        self.read_response_string().await
+        self.run_terminal_command(cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Ask the HDC server to discover targets.
+    ///
+    /// This one-shot task drains its response and disconnects the client before
+    /// returning. Create a fresh client before issuing another terminal task.
     ///
     /// # Example
     /// ```no_run
@@ -384,11 +483,14 @@ impl HdcClient {
     /// # }
     /// ```
     pub async fn discover(&mut self) -> Result<String> {
-        self.send_command("discover").await?;
-        self.read_response_string().await
+        self.run_terminal_command("discover", Duration::from_secs(30))
+            .await
     }
 
     /// Check target device state.
+    ///
+    /// This one-shot task drains its response and disconnects the client before
+    /// returning. Create a fresh client before issuing another terminal task.
     ///
     /// # Example
     /// ```no_run
@@ -405,11 +507,14 @@ impl HdcClient {
             Some(key) if !key.is_empty() => format!("checkdevice {}", key),
             _ => "checkdevice".to_string(),
         };
-        self.send_command(&cmd).await?;
-        self.read_response_string().await
+        self.run_terminal_command(&cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Connect to a target by connect key, such as `host:port`.
+    ///
+    /// The task consumes its channel; the client is disconnected when this
+    /// method returns.
     ///
     /// # Example
     /// ```no_run
@@ -422,11 +527,14 @@ impl HdcClient {
     /// ```
     pub async fn target_connect(&mut self, key: &str) -> Result<String> {
         let cmd = crate::command_builder::target_connect(key, false);
-        self.send_command(&cmd).await?;
-        self.read_response_string().await
+        self.run_terminal_command(&cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Disconnect a target by connect key.
+    ///
+    /// The task consumes its channel; the client is disconnected when this
+    /// method returns.
     ///
     /// # Example
     /// ```no_run
@@ -439,11 +547,14 @@ impl HdcClient {
     /// ```
     pub async fn target_disconnect(&mut self, key: &str) -> Result<String> {
         let cmd = crate::command_builder::target_connect(key, true);
-        self.send_command(&cmd).await?;
-        self.read_response_string().await
+        self.run_terminal_command(&cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Select any available target.
+    ///
+    /// The task consumes its channel; the client is disconnected when this
+    /// method returns.
     ///
     /// # Example
     /// ```no_run
@@ -455,11 +566,14 @@ impl HdcClient {
     /// # }
     /// ```
     pub async fn connect_any(&mut self) -> Result<String> {
-        self.send_command("any").await?;
-        self.read_response_string().await
+        self.run_terminal_command("any", Duration::from_secs(30))
+            .await
     }
 
     /// Reconnect the current or specified target.
+    ///
+    /// The task consumes its channel; the client is disconnected when this
+    /// method returns.
     ///
     /// # Example
     /// ```no_run
@@ -472,11 +586,14 @@ impl HdcClient {
     /// ```
     pub async fn reconnect_target(&mut self, connect_key: Option<&str>) -> Result<String> {
         let cmd = crate::command_builder::reconnect_target(connect_key);
-        self.send_command(&cmd).await?;
-        self.read_response_string().await
+        self.run_terminal_command(&cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Mount the target filesystem.
+    ///
+    /// The task consumes its channel; the client is disconnected when this
+    /// method returns.
     ///
     /// # Example
     /// ```no_run
@@ -489,11 +606,14 @@ impl HdcClient {
     /// ```
     pub async fn target_mount(&mut self) -> Result<String> {
         let cmd = crate::command_builder::target_mount();
-        self.send_command(&cmd).await?;
-        self.read_response_string().await
+        self.run_terminal_command(&cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Boot the target, optionally using an upstream boot mode.
+    ///
+    /// The task consumes its channel; the client is disconnected when this
+    /// method returns.
     ///
     /// # Example
     /// ```no_run
@@ -509,18 +629,20 @@ impl HdcClient {
         mode: Option<crate::device::TargetBootMode>,
     ) -> Result<String> {
         let cmd = crate::command_builder::target_boot(mode.as_ref().map(|mode| mode.as_arg()));
-        self.send_command(&cmd).await?;
-        self.read_response_string().await
+        self.run_terminal_command(&cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Switch daemon privilege mode. `true` renders `smode`, `false` renders `smode -r`.
+    /// The client is disconnected when this task completes.
     pub async fn smode(&mut self, enable_root: bool) -> Result<String> {
         let cmd = crate::command_builder::smode(enable_root);
-        self.send_command(&cmd).await?;
-        self.read_response_string().await
+        self.run_terminal_command(&cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Switch daemon transport mode.
+    /// The client is disconnected when this task completes.
     ///
     /// # Example
     /// ```no_run
@@ -537,8 +659,8 @@ impl HdcClient {
             crate::device::TargetMode::Port(port) => crate::command_builder::tmode_port(port),
             crate::device::TargetMode::PortClose => crate::command_builder::tmode_port_close(),
         };
-        self.send_command(&cmd).await?;
-        self.read_response_string().await
+        self.run_terminal_command(&cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Execute a command on a specific device
@@ -548,16 +670,20 @@ impl HdcClient {
     /// 2. Executes the command
     ///
     /// Note: This changes the client's current device setting.
+    /// The task consumes its channel; the client is disconnected when this
+    /// method returns.
     pub async fn target_command(&mut self, device_id: &str, cmd: &str) -> Result<String> {
         info!("Executing target command on {}: {}", device_id, cmd);
 
-        // Connect to device first (sets connectKey in handshake)
-        self.connect_device(device_id).await?;
-
-        // Send command directly
-        self.send_command(cmd).await?;
-        let output = self.read_response_string().await?;
-        Ok(output)
+        let result = async {
+            // Connect to device first (sets connectKey in handshake)
+            self.connect_device(device_id).await?;
+            self.run_terminal_command(cmd, Duration::from_secs(30))
+                .await
+        }
+        .await;
+        self.invalidate_connection();
+        result
     }
 
     /// Execute a shell command on a specific device (convenience method)
@@ -586,6 +712,8 @@ impl HdcClient {
     /// Create a port forward (fport)
     ///
     /// Forward local traffic to remote device.
+    /// The task drains its channel and disconnects the client when it returns.
+    /// Create a fresh client before issuing another terminal task.
     ///
     /// # Example
     /// ```no_run
@@ -613,9 +741,13 @@ impl HdcClient {
             local.as_protocol_string(),
             remote.as_protocol_string()
         );
-        self.send_command(&cmd).await?;
-
-        let response = self.read_response_string().await?;
+        let result = async {
+            self.send_command(&cmd).await?;
+            self.read_until_channel_end(Duration::from_secs(30)).await
+        }
+        .await;
+        self.invalidate_connection();
+        let response = result?;
         debug!("Forward response: {}", response);
         Ok(response)
     }
@@ -623,6 +755,8 @@ impl HdcClient {
     /// Create a reverse port forward (rport)
     ///
     /// Reserve remote traffic to local host.
+    /// The task drains its channel and disconnects the client when it returns.
+    /// Create a fresh client before issuing another terminal task.
     ///
     /// # Example
     /// ```no_run
@@ -650,55 +784,14 @@ impl HdcClient {
             remote.as_protocol_string(),
             local.as_protocol_string()
         );
-        self.send_command(&cmd).await?;
-
-        let response = self.read_response_string().await?;
+        let result = async {
+            self.send_command(&cmd).await?;
+            self.read_until_channel_end(Duration::from_secs(30)).await
+        }
+        .await;
+        self.invalidate_connection();
+        let response = result?;
         debug!("Reverse forward response: {}", response);
-        Ok(response)
-    }
-
-    /// List reverse port forward tasks using explicit `rport ls`.
-    ///
-    /// Note: This command does not require a device connection.
-    pub async fn rport_list(&mut self) -> Result<Vec<String>> {
-        info!("Listing reverse forward tasks");
-
-        let mut temp_client = Self::new(&self.address);
-        temp_client.connect_internal().await?;
-
-        temp_client.send_command("rport ls").await?;
-        let response = temp_client.read_response_string().await?;
-        debug!("Reverse forward list response: {}", response);
-
-        if response.starts_with("[Fail]") {
-            return Err(HdcError::Protocol(response));
-        }
-
-        Ok(response
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(str::to_string)
-            .collect())
-    }
-
-    /// Remove a reverse port forward task using explicit `rport rm`.
-    pub async fn rport_remove(&mut self, task_str: &str) -> Result<String> {
-        info!("Removing reverse forward task: {}", task_str);
-
-        let mut temp_client = Self::new(&self.address);
-        temp_client.connect_internal().await?;
-
-        let cmd = format!("rport rm {}", task_str);
-        temp_client.send_command(&cmd).await?;
-
-        let response = temp_client.read_response_string().await?;
-        debug!("Remove reverse forward response: {}", response);
-
-        if response.starts_with("[Fail]") {
-            return Err(HdcError::Protocol(response));
-        }
-
         Ok(response)
     }
 
@@ -775,6 +868,9 @@ impl HdcClient {
     /// * `paths` - Single or multiple package paths (.hap, .hsp) or directories
     /// * `options` - Install options (replace, shared)
     ///
+    /// The install task consumes its channel; the client is disconnected when
+    /// this method returns.
+    ///
     /// # Example
     /// ```no_run
     /// # use hdc_rs::{HdcClient, InstallOptions};
@@ -792,8 +888,14 @@ impl HdcClient {
     ) -> Result<String> {
         info!("Installing app: {:?} with options: {:?}", paths, options);
 
+        options.validate()?;
         let flags = options.to_flags();
-        let paths_str = paths.join(" ");
+        let mut rendered_paths = Vec::with_capacity(paths.len());
+        for path in paths {
+            crate::app::validate_path_argument("install source path", path)?;
+            rendered_paths.push(crate::app::render_hdc_argument(path));
+        }
+        let paths_str = rendered_paths.join(" ");
 
         let cmd = if flags.is_empty() {
             format!("install {}", paths_str)
@@ -801,44 +903,8 @@ impl HdcClient {
             format!("install {} {}", flags, paths_str)
         };
 
-        self.send_command(&cmd).await?;
-
-        // Install may take time and send multiple responses
-        let mut output = String::new();
-        loop {
-            match timeout(Duration::from_secs(30), self.read_response_string()).await {
-                Ok(Ok(resp)) => {
-                    if resp.is_empty() {
-                        break;
-                    }
-                    output.push_str(&resp);
-
-                    // Check if installation completed
-                    if resp.contains("Success")
-                        || resp.contains("success")
-                        || resp.contains("Fail")
-                        || resp.contains("fail")
-                    {
-                        break;
-                    }
-                }
-                Ok(Err(e)) => return Err(e),
-                Err(_) => {
-                    warn!("Timeout waiting for install response");
-                    break;
-                }
-            }
-        }
-
-        debug!("Install output: {} bytes", output.len());
-        Ok(output)
-    }
-
-    /// Sideload an update/package file to the target.
-    pub async fn sideload(&mut self, path: &str) -> Result<String> {
-        let cmd = format!("sideload {}", path);
-        self.send_command(&cmd).await?;
-        self.read_response_string().await
+        self.run_terminal_command(&cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Uninstall application package from device
@@ -846,6 +912,9 @@ impl HdcClient {
     /// # Arguments
     /// * `package` - Package name to uninstall
     /// * `options` - Uninstall options (keep_data, shared)
+    ///
+    /// The package is encoded as the upstream `-n` option. The task consumes
+    /// its channel; the client is disconnected when this method returns.
     ///
     /// # Example
     /// ```no_run
@@ -864,19 +933,19 @@ impl HdcClient {
     ) -> Result<String> {
         info!("Uninstalling app: {} with options: {:?}", package, options);
 
+        crate::app::validate_package_name(package)?;
+        options.validate()?;
         let flags = options.to_flags();
+        let package_arg = format!("\"-n {package}\"");
 
         let cmd = if flags.is_empty() {
-            format!("uninstall {}", package)
+            format!("uninstall {package_arg}")
         } else {
-            format!("uninstall {} {}", flags, package)
+            format!("uninstall {} {}", flags, package_arg)
         };
 
-        self.send_command(&cmd).await?;
-
-        let response = self.read_response_string().await?;
-        debug!("Uninstall response: {}", response);
-        Ok(response)
+        self.run_terminal_command(&cmd, Duration::from_secs(30))
+            .await
     }
 
     /// Display device logs using hilog
@@ -896,10 +965,6 @@ impl HdcClient {
     /// // Display all logs
     /// let logs = client.hilog(None).await?;
     /// println!("{}", logs);
-    ///
-    /// // Display only app logs
-    /// let app_logs = client.hilog(Some("-t app")).await?;
-    /// println!("{}", app_logs);
     /// # Ok(())
     /// # }
     /// ```
@@ -912,39 +977,44 @@ impl HdcClient {
             "hilog".to_string()
         };
 
-        self.send_command(&cmd).await?;
+        let result = async {
+            self.send_command(&cmd).await?;
 
-        let mut output = String::new();
+            let mut output = String::new();
 
-        // Read log stream with extended timeout
-        // Hilog streams continuously, we read for a reasonable amount of time
-        loop {
-            match timeout(Duration::from_secs(5), self.read_response_string()).await {
-                Ok(Ok(resp)) => {
-                    if resp.is_empty() {
+            // Read log stream with extended timeout
+            // Hilog streams continuously, we read for a reasonable amount of time
+            loop {
+                match timeout(Duration::from_secs(5), self.read_response()).await {
+                    Ok(Ok(data)) if data.is_empty() => continue,
+                    Ok(Ok(data)) => {
+                        let resp = String::from_utf8(data)?;
+                        output.push_str(&resp);
+
+                        // For continuous log streaming, check if user wants to stop
+                        // In practice, you might want to use a callback or channel here
+                        // to allow real-time log streaming instead of buffering
+                    }
+                    Ok(Err(HdcError::ConnectionClosed)) => break,
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => {
+                        // Timeout - check if we got any data
+                        if output.is_empty() {
+                            warn!("Timeout waiting for hilog response");
+                            return Err(HdcError::Timeout);
+                        }
+                        // Otherwise, this might just be the end of the log stream
                         break;
                     }
-                    output.push_str(&resp);
-
-                    // For continuous log streaming, check if user wants to stop
-                    // In practice, you might want to use a callback or channel here
-                    // to allow real-time log streaming instead of buffering
-                }
-                Ok(Err(e)) => return Err(e),
-                Err(_) => {
-                    // Timeout - check if we got any data
-                    if output.is_empty() {
-                        warn!("Timeout waiting for hilog response");
-                        return Err(HdcError::Timeout);
-                    }
-                    // Otherwise, this might just be the end of the log stream
-                    break;
                 }
             }
-        }
 
-        debug!("Hilog output: {} bytes", output.len());
-        Ok(output)
+            debug!("Hilog output: {} bytes", output.len());
+            Ok(output)
+        }
+        .await;
+        self.invalidate_connection();
+        result
     }
 
     /// Stream hilog output continuously with a callback
@@ -982,54 +1052,55 @@ impl HdcClient {
             "hilog".to_string()
         };
 
-        self.send_command(&cmd).await?;
+        let result = async {
+            self.send_command(&cmd).await?;
 
-        // Stream logs continuously
-        loop {
-            match timeout(Duration::from_secs(30), self.read_response_string()).await {
-                Ok(Ok(resp)) => {
-                    if resp.is_empty() {
+            // Stream logs continuously
+            loop {
+                match timeout(Duration::from_secs(30), self.read_response()).await {
+                    Ok(Ok(data)) if data.is_empty() => continue,
+                    Ok(Ok(data)) => {
+                        let response = String::from_utf8(data)?;
+
+                        // Call user callback with log chunk
+                        if !callback(&response) {
+                            info!("Hilog stream stopped by callback");
+                            break;
+                        }
+                    }
+                    Ok(Err(HdcError::ConnectionClosed)) => break,
+                    Ok(Err(e)) => {
+                        warn!("Error reading hilog stream: {:?}", e);
+                        return Err(e);
+                    }
+                    Err(_) => {
+                        warn!("Timeout reading hilog stream");
                         break;
                     }
-
-                    // Call user callback with log chunk
-                    if !callback(&resp) {
-                        info!("Hilog stream stopped by callback");
-                        break;
-                    }
-                }
-                Ok(Err(e)) => {
-                    warn!("Error reading hilog stream: {:?}", e);
-                    return Err(e);
-                }
-                Err(_) => {
-                    warn!("Timeout reading hilog stream");
-                    break;
                 }
             }
+
+            Ok(())
         }
-
-        Ok(())
-    }
-
-    /// Collect a target bugreport.
-    pub async fn bugreport(&mut self, output_file: Option<&str>) -> Result<String> {
-        let cmd = match output_file {
-            Some(path) if !path.is_empty() => format!("bugreport {}", path),
-            _ => "bugreport".to_string(),
-        };
-        self.send_command(&cmd).await?;
-        self.read_response_string().await
+        .await;
+        self.invalidate_connection();
+        result
     }
 
     /// List debug/JDWP process identifiers.
+    ///
+    /// The task consumes its channel; the client is disconnected when this
+    /// method returns.
     pub async fn jpid(&mut self) -> Result<Vec<String>> {
-        self.send_command("jpid").await?;
-        let response = self.read_response_string().await?;
+        let response = self
+            .run_terminal_command("jpid", Duration::from_secs(30))
+            .await?;
         Ok(parse_jpid_response(&response))
     }
 
     /// Track debug/JDWP process changes.
+    ///
+    /// The client is disconnected when the callback stops or the stream ends.
     pub async fn track_jpid<F>(
         &mut self,
         include_release: bool,
@@ -1046,22 +1117,37 @@ impl HdcClient {
         } else {
             "track-jpid"
         };
-        self.send_command(cmd).await?;
+        let result = async {
+            self.send_command(cmd).await?;
 
-        loop {
-            let response = self.read_response_string().await?;
-            if response.is_empty() || !callback(&response) {
-                break;
+            loop {
+                match self.read_response().await {
+                    Ok(data) if data.is_empty() => continue,
+                    Ok(data) => {
+                        let response = String::from_utf8(data)?;
+                        if !callback(&response) {
+                            break;
+                        }
+                    }
+                    Err(HdcError::ConnectionClosed) => break,
+                    Err(error) => return Err(error),
+                }
             }
-        }
 
-        Ok(())
+            Ok(())
+        }
+        .await;
+        self.invalidate_connection();
+        result
     }
 
     /// Wait for any device to connect
     ///
     /// This command blocks until at least one device is connected.
     /// If a device is already connected, it returns immediately.
+    /// The upstream server reports no-device failures on the same channel;
+    /// this method retries indefinitely until a device is found. On success or
+    /// error, the client is disconnected before returning.
     ///
     /// # Example
     /// ```no_run
@@ -1077,17 +1163,52 @@ impl HdcClient {
     pub async fn wait_for_device(&mut self) -> Result<String> {
         info!("Waiting for device...");
 
-        self.send_command("wait").await?;
+        loop {
+            if let Err(error) = self.send_command("wait").await {
+                self.invalidate_connection();
+                return Err(error);
+            }
 
-        let response = self.read_response_string().await?;
-        debug!("Wait for device response: {}", response);
+            let response = match self.read_response_frame().await {
+                Ok(ResponseFrame::Data(data)) => match String::from_utf8(data) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        self.invalidate_connection();
+                        return Err(error.into());
+                    }
+                },
+                Ok(ResponseFrame::ChannelClose) => {
+                    self.invalidate_connection();
+                    return Err(HdcError::ConnectionClosed);
+                }
+                Err(error) => {
+                    self.invalidate_connection();
+                    return Err(error);
+                }
+            };
 
-        // Response format: "Wait for connected target is <device_id>"
-        if let Some(device_id) = response.split("is ").nth(1) {
-            Ok(device_id.trim().to_string())
-        } else {
-            // Fallback: just return the whole response
-            Ok(response.trim().to_string())
+            let response = response.trim().to_string();
+            debug!("Wait for device response: {}", response);
+
+            // The upstream server keeps this channel open and reports this
+            // response until a target becomes available.
+            if response == "[Fail]No any connected target" {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+
+            // Response format: "Wait for connected target is <device_id>".
+            if let Some(device_id) = response
+                .strip_prefix("Wait for connected target is ")
+                .map(str::trim)
+                .filter(|device_id| !device_id.is_empty())
+            {
+                self.invalidate_connection();
+                return Ok(device_id.to_string());
+            }
+
+            self.invalidate_connection();
+            return Err(HdcError::Protocol(response));
         }
     }
 
@@ -1178,6 +1299,9 @@ impl HdcClient {
     /// * `remote_path` - Remote device path destination
     /// * `options` - File transfer options (timestamp, sync, compress, etc.)
     ///
+    /// The transfer task consumes its channel; the client is disconnected when
+    /// this method returns.
+    ///
     /// # Example
     /// ```no_run
     /// # use hdc_rs::{HdcClient, FileTransferOptions};
@@ -1199,54 +1323,27 @@ impl HdcClient {
     ) -> Result<String> {
         info!("Sending file: {} -> {}", local_path, remote_path);
 
-        // Validate paths
         if !crate::file::validate_path(local_path) || !crate::file::validate_path(remote_path) {
             return Err(HdcError::Protocol("Invalid file path".to_string()));
         }
+        crate::app::validate_path_argument("local path", local_path)?;
+        crate::app::validate_path_argument("remote path", remote_path)?;
+
+        options.validate()?;
 
         // Build command
         let flags = options.to_flags();
+        let local_arg = crate::app::render_hdc_argument(local_path);
+        let remote_arg = crate::app::render_hdc_argument(remote_path);
         let cmd = if flags.is_empty() {
-            format!("file send {} {}", local_path, remote_path)
+            format!("file send {} {}", local_arg, remote_arg)
         } else {
-            format!("file send {} {} {}", flags, local_path, remote_path)
+            format!("file send {} {} {}", flags, local_arg, remote_arg)
         };
 
         info!("File send command: {}", cmd);
-        self.send_command(&cmd).await?;
-
-        // Read transfer responses
-        let mut output = String::new();
-        loop {
-            match timeout(Duration::from_secs(60), self.read_response_string()).await {
-                Ok(Ok(resp)) => {
-                    if resp.is_empty() {
-                        break;
-                    }
-                    output.push_str(&resp);
-
-                    // Check for completion indicators
-                    if resp.contains("FileTransfer finish")
-                        || resp.contains("Transfer finish")
-                        || resp.contains("[Fail]")
-                        || resp.contains("fail")
-                    {
-                        break;
-                    }
-                }
-                Ok(Err(e)) => return Err(e),
-                Err(_) => {
-                    warn!("Timeout during file transfer");
-                    if output.is_empty() {
-                        return Err(HdcError::Timeout);
-                    }
-                    break;
-                }
-            }
-        }
-
-        debug!("File send output: {} bytes", output.len());
-        Ok(output)
+        self.run_terminal_command(&cmd, Duration::from_secs(60))
+            .await
     }
 
     /// Receive file from device
@@ -1257,6 +1354,9 @@ impl HdcClient {
     /// * `remote_path` - Remote device file path to receive
     /// * `local_path` - Local destination path
     /// * `options` - File transfer options (timestamp, sync, compress, etc.)
+    ///
+    /// The transfer task consumes its channel; the client is disconnected when
+    /// this method returns.
     ///
     /// # Example
     /// ```no_run
@@ -1277,54 +1377,27 @@ impl HdcClient {
     ) -> Result<String> {
         info!("Receiving file: {} -> {}", remote_path, local_path);
 
-        // Validate paths
         if !crate::file::validate_path(local_path) || !crate::file::validate_path(remote_path) {
             return Err(HdcError::Protocol("Invalid file path".to_string()));
         }
+        crate::app::validate_path_argument("local path", local_path)?;
+        crate::app::validate_path_argument("remote path", remote_path)?;
+
+        options.validate()?;
 
         // Build command
         let flags = options.to_flags();
+        let remote_arg = crate::app::render_hdc_argument(remote_path);
+        let local_arg = crate::app::render_hdc_argument(local_path);
         let cmd = if flags.is_empty() {
-            format!("file recv {} {}", remote_path, local_path)
+            format!("file recv {} {}", remote_arg, local_arg)
         } else {
-            format!("file recv {} {} {}", flags, remote_path, local_path)
+            format!("file recv {} {} {}", flags, remote_arg, local_arg)
         };
 
         info!("File recv command: {}", cmd);
-        self.send_command(&cmd).await?;
-
-        // Read transfer responses
-        let mut output = String::new();
-        loop {
-            match timeout(Duration::from_secs(60), self.read_response_string()).await {
-                Ok(Ok(resp)) => {
-                    if resp.is_empty() {
-                        break;
-                    }
-                    output.push_str(&resp);
-
-                    // Check for completion indicators
-                    if resp.contains("FileTransfer finish")
-                        || resp.contains("Transfer finish")
-                        || resp.contains("[Fail]")
-                        || resp.contains("fail")
-                    {
-                        break;
-                    }
-                }
-                Ok(Err(e)) => return Err(e),
-                Err(_) => {
-                    warn!("Timeout during file transfer");
-                    if output.is_empty() {
-                        return Err(HdcError::Timeout);
-                    }
-                    break;
-                }
-            }
-        }
-
-        debug!("File recv output: {} bytes", output.len());
-        Ok(output)
+        self.run_terminal_command(&cmd, Duration::from_secs(60))
+            .await
     }
 }
 
@@ -1351,5 +1424,33 @@ mod tests {
     fn parses_jpid_response_lines() {
         let pids = parse_jpid_response(" 123 \n\n456\n\t789\t\n");
         assert_eq!(pids, vec!["123", "456", "789"]);
+    }
+
+    #[test]
+    fn decodes_channel_close_without_exposing_payload() {
+        assert_eq!(
+            decode_response_frame(vec![2, 0, b'c', b'l', b'o', b's', b'e']),
+            ResponseFrame::ChannelClose
+        );
+    }
+
+    #[test]
+    fn decodes_prefixed_response_payload() {
+        assert_eq!(
+            decode_response_frame(vec![9, 0, b'o', b'k']),
+            ResponseFrame::Data(vec![b'o', b'k'])
+        );
+        assert_eq!(
+            decode_response_frame(vec![0xE9, 0x03, b'o', b'k']),
+            ResponseFrame::Data(vec![0xE9, 0x03, b'o', b'k'])
+        );
+        assert_eq!(
+            decode_response_frame(vec![13, 0, b'1', b'.', b'2']),
+            ResponseFrame::Data(vec![b'1', b'.', b'2'])
+        );
+        assert_eq!(
+            decode_response_frame(vec![14, 0, b'o', b'k']),
+            ResponseFrame::Data(vec![14, 0, b'o', b'k'])
+        );
     }
 }

@@ -285,6 +285,9 @@ impl HdcClient {
 
     /// Create a forward port mapping (local -> device)
     ///
+    /// The terminal task drains its channel and disconnects the client on return.
+    /// Create a fresh client before another terminal task.
+    ///
     /// Args:
     ///     local: Local forward node (e.g., "tcp:8080")
     ///     remote: Remote forward node (e.g., "tcp:8080")
@@ -307,6 +310,9 @@ impl HdcClient {
     }
 
     /// Create a reverse port mapping (device -> local)
+    ///
+    /// The terminal task drains its channel and disconnects the client on return.
+    /// Create a fresh client before another terminal task.
     ///
     /// Args:
     ///     remote: Remote forward node (e.g., "tcp:9090")
@@ -336,20 +342,6 @@ impl HdcClient {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
-    /// List reverse port mappings.
-    fn rport_list(&mut self) -> PyResult<Vec<String>> {
-        self.inner
-            .rport_list()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-    }
-
-    /// Remove a reverse port mapping.
-    fn rport_remove(&mut self, task_str: &str) -> PyResult<String> {
-        self.inner
-            .rport_remove(task_str)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-    }
-
     /// Remove a forward port mapping
     ///
     /// Args:
@@ -376,7 +368,6 @@ impl HdcClient {
     ///     cwd: Working directory (default: None)
     ///     wait_time: Wait time in seconds (default: None)
     ///     user_id: User ID (default: None)
-    ///     bundle_path: Bundle path (default: None)
     ///     list_options: List install options (default: False)
     ///     grant_permissions: Grant permissions after install (default: False)
     ///
@@ -387,7 +378,7 @@ impl HdcClient {
     ///     >>> result = client.install(["app.hap"], replace=True)
     ///     >>> print(result)
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (packages, replace=false, shared=false, cwd=None, wait_time=None, user_id=None, bundle_path=None, list_options=false, grant_permissions=false))]
+    #[pyo3(signature = (packages, replace=false, shared=false, cwd=None, wait_time=None, user_id=None, list_options=false, grant_permissions=false))]
     fn install(
         &mut self,
         packages: Vec<String>,
@@ -396,7 +387,6 @@ impl HdcClient {
         cwd: Option<&str>,
         wait_time: Option<u64>,
         user_id: Option<&str>,
-        bundle_path: Option<&str>,
         list_options: bool,
         grant_permissions: bool,
     ) -> PyResult<String> {
@@ -414,20 +404,9 @@ impl HdcClient {
         if let Some(user_id) = user_id {
             options = options.user_id(user_id);
         }
-        if let Some(bundle_path) = bundle_path {
-            options = options.bundle_path(bundle_path);
-        }
-
         let package_refs: Vec<&str> = packages.iter().map(|s| s.as_str()).collect();
         self.inner
             .install(&package_refs, options)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-    }
-
-    /// Sideload an update/package file to the target.
-    fn sideload(&mut self, path: &str) -> PyResult<String> {
-        self.inner
-            .sideload(path)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
@@ -437,7 +416,6 @@ impl HdcClient {
     ///     package: Package name to uninstall
     ///     keep_data: Keep the data and cache directories (default: False)
     ///     shared: Remove shared bundle (default: False)
-    ///     bundle_name: Bundle name option (default: None)
     ///     module_name: Module name option (default: None)
     ///     version_code: Version code option (default: None)
     ///     user_id: User ID (default: None)
@@ -450,13 +428,12 @@ impl HdcClient {
     ///     >>> result = client.uninstall("com.example.app")
     ///     >>> print(result)
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (package, keep_data=false, shared=false, bundle_name=None, module_name=None, version_code=None, user_id=None, list_options=false))]
+    #[pyo3(signature = (package, keep_data=false, shared=false, module_name=None, version_code=None, user_id=None, list_options=false))]
     fn uninstall(
         &mut self,
         package: &str,
         keep_data: bool,
         shared: bool,
-        bundle_name: Option<&str>,
         module_name: Option<&str>,
         version_code: Option<&str>,
         user_id: Option<&str>,
@@ -466,9 +443,6 @@ impl HdcClient {
             .keep_data(keep_data)
             .shared(shared)
             .list_options(list_options);
-        if let Some(bundle_name) = bundle_name {
-            options = options.bundle_name(bundle_name);
-        }
         if let Some(module_name) = module_name {
             options = options.module_name(module_name);
         }
@@ -495,18 +469,9 @@ impl HdcClient {
     /// Example:
     ///     >>> logs = client.hilog()
     ///     >>> print(logs)
-    ///     >>> # With filter
-    ///     >>> logs = client.hilog("-t MyTag")
     fn hilog(&mut self, args: Option<&str>) -> PyResult<String> {
         self.inner
             .hilog(args)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-    }
-
-    /// Collect a target bugreport.
-    fn bugreport(&mut self, output_file: Option<&str>) -> PyResult<String> {
-        self.inner
-            .bugreport(output_file)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
@@ -567,8 +532,6 @@ impl HdcClient {
     ///     ...     print(log_chunk, end='')
     ///     ...     return True  # Continue streaming
     ///     >>> client.hilog_stream(log_handler)
-    ///     >>> # With filter
-    ///     >>> client.hilog_stream(log_handler, args="-t MyTag")
     #[pyo3(signature = (callback, args=None))]
     fn hilog_stream(&mut self, callback: PyObject, args: Option<&str>) -> PyResult<()> {
         Python::with_gil(|py| {
