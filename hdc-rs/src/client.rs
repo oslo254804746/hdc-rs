@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 use tokio::net::TcpStream;
-use tokio::time::timeout;
+use tokio::time::{timeout, Instant};
 use tracing::{debug, info, warn};
 
 use crate::error::{HdcError, Result};
@@ -10,6 +10,8 @@ use crate::protocol::{ChannelHandShake, HdcCommand, PacketCodec};
 
 /// Default connection timeout
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+const HILOG_CAPTURE_DURATION: Duration = Duration::from_secs(2);
+const HILOG_FRAME_TIMEOUT: Duration = Duration::from_millis(500);
 
 fn parse_jpid_response(response: &str) -> Vec<String> {
     response
@@ -42,6 +44,91 @@ fn decode_response_frame(data: Vec<u8>) -> ResponseFrame {
     }
 
     ResponseFrame::Data(data)
+}
+
+/// Incremental UTF-8 decoder used by streaming APIs.
+///
+/// A packet boundary is not a UTF-8 boundary.  Keep an incomplete code point
+/// until the next packet, and process every complete invalid sequence before
+/// returning so valid text after a bad byte is delivered without waiting for
+/// another packet.
+#[derive(Default)]
+struct Utf8StreamDecoder {
+    pending: Vec<u8>,
+}
+
+impl Utf8StreamDecoder {
+    fn push<F>(&mut self, data: &[u8], callback: &mut F) -> bool
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.pending.extend_from_slice(data);
+        self.emit_complete(callback)
+    }
+
+    fn emit_complete<F>(&mut self, callback: &mut F) -> bool
+    where
+        F: FnMut(&str) -> bool,
+    {
+        let mut consumed = 0;
+
+        loop {
+            let remaining = &self.pending[consumed..];
+            let error = match std::str::from_utf8(remaining) {
+                Ok(text) => {
+                    if !text.is_empty() && !callback(text) {
+                        return false;
+                    }
+                    self.pending.clear();
+                    return true;
+                }
+                Err(error) => error,
+            };
+
+            let valid_up_to = error.valid_up_to();
+            if valid_up_to > 0 {
+                // `valid_up_to` is guaranteed to end on a UTF-8 boundary.
+                let valid = std::str::from_utf8(&remaining[..valid_up_to])
+                    .expect("valid UTF-8 prefix reported by from_utf8");
+                if !callback(valid) {
+                    return false;
+                }
+                consumed += valid_up_to;
+                continue;
+            }
+
+            // A missing continuation byte is not an error yet.  Retain the
+            // incomplete code point for the next packet or EOF flush.
+            let Some(error_len) = error.error_len() else {
+                if consumed > 0 {
+                    self.pending.drain(..consumed);
+                }
+                return true;
+            };
+
+            // Emit the replacement for this invalid sequence and continue
+            // decoding the remainder of this same packet immediately.
+            let replacement = String::from_utf8_lossy(&remaining[..error_len]);
+            if !callback(&replacement) {
+                return false;
+            }
+            consumed += error_len;
+        }
+    }
+
+    fn finish<F>(&mut self, callback: &mut F) -> bool
+    where
+        F: FnMut(&str) -> bool,
+    {
+        if self.pending.is_empty() {
+            return true;
+        }
+
+        let trailing = String::from_utf8_lossy(&self.pending);
+        let keep_going = callback(&trailing);
+        self.pending.clear();
+        keep_going
+    }
 }
 
 /// HDC client for communicating with HDC server
@@ -903,7 +990,7 @@ impl HdcClient {
             format!("install {} {}", flags, paths_str)
         };
 
-        self.run_terminal_command(&cmd, Duration::from_secs(30))
+        self.run_terminal_command(&cmd, Duration::from_secs(300))
             .await
     }
 
@@ -936,7 +1023,7 @@ impl HdcClient {
         crate::app::validate_package_name(package)?;
         options.validate()?;
         let flags = options.to_flags();
-        let package_arg = format!("\"-n {package}\"");
+        let package_arg = format!("-n {package}");
 
         let cmd = if flags.is_empty() {
             format!("uninstall {package_arg}")
@@ -948,10 +1035,11 @@ impl HdcClient {
             .await
     }
 
-    /// Display device logs using hilog
+    /// Capture device logs using hilog.
     ///
-    /// This method streams logs from the device. The log stream will continue until
-    /// the connection is closed or an error occurs.
+    /// Capture runs for at most two seconds. Once a payload has been received,
+    /// a 500 ms interval without a complete frame ends the capture. The
+    /// channel is closed before this method returns.
     ///
     /// # Arguments
     /// * `args` - Optional arguments for hilog command (e.g., "-h" for help, "-t app" for app logs)
@@ -977,44 +1065,76 @@ impl HdcClient {
             "hilog".to_string()
         };
 
-        let result = async {
-            self.send_command(&cmd).await?;
-
-            let mut output = String::new();
-
-            // Read log stream with extended timeout
-            // Hilog streams continuously, we read for a reasonable amount of time
-            loop {
-                match timeout(Duration::from_secs(5), self.read_response()).await {
-                    Ok(Ok(data)) if data.is_empty() => continue,
-                    Ok(Ok(data)) => {
-                        let resp = String::from_utf8(data)?;
-                        output.push_str(&resp);
-
-                        // For continuous log streaming, check if user wants to stop
-                        // In practice, you might want to use a callback or channel here
-                        // to allow real-time log streaming instead of buffering
-                    }
-                    Ok(Err(HdcError::ConnectionClosed)) => break,
-                    Ok(Err(e)) => return Err(e),
-                    Err(_) => {
-                        // Timeout - check if we got any data
-                        if output.is_empty() {
-                            warn!("Timeout waiting for hilog response");
-                            return Err(HdcError::Timeout);
-                        }
-                        // Otherwise, this might just be the end of the log stream
-                        break;
-                    }
-                }
-            }
-
-            debug!("Hilog output: {} bytes", output.len());
-            Ok(output)
-        }
-        .await;
+        let result = self
+            .hilog_capture(&cmd, HILOG_CAPTURE_DURATION, HILOG_FRAME_TIMEOUT)
+            .await;
         self.invalidate_connection();
         result
+    }
+
+    /// Capture hilog frames for a bounded period.
+    ///
+    /// A timeout ends the current channel. This is deliberate because packet
+    /// reads use `read_exact`, which may have consumed part of a frame before
+    /// cancellation; no later read is attempted on that channel.
+    async fn hilog_capture(
+        &mut self,
+        command: &str,
+        capture_duration: Duration,
+        frame_timeout: Duration,
+    ) -> Result<String> {
+        self.send_command(command).await?;
+
+        let deadline = Instant::now() + capture_duration;
+        let mut output = Vec::new();
+        let mut have_payload = false;
+
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                if output.is_empty() {
+                    warn!("Timeout waiting for hilog response");
+                    return Err(HdcError::Timeout);
+                }
+                break;
+            }
+
+            let remaining = deadline.saturating_duration_since(now);
+            let wait = if have_payload && remaining > frame_timeout {
+                frame_timeout
+            } else {
+                remaining
+            };
+
+            match timeout(wait, self.read_response_frame()).await {
+                Ok(Ok(ResponseFrame::ChannelClose)) => break,
+                Ok(Ok(ResponseFrame::Data(data))) if data.is_empty() => {
+                    // Empty packets are keepalive/no-op frames.  Re-check the
+                    // absolute deadline on every iteration so a peer sending
+                    // them continuously cannot make this loop unbounded.
+                }
+                Ok(Ok(ResponseFrame::Data(data))) => {
+                    have_payload = true;
+                    output.extend_from_slice(&data);
+                }
+                Ok(Err(HdcError::ConnectionClosed)) => break,
+                Ok(Err(error)) => return Err(error),
+                Err(_) => {
+                    // A timeout may have cancelled a non-cancellation-safe
+                    // packet read halfway through its body.  End this channel
+                    // immediately so no later read can start in the middle of
+                    // that frame; the caller's outer method invalidates it.
+                    if output.is_empty() {
+                        warn!("Timeout waiting for hilog response");
+                        return Err(HdcError::Timeout);
+                    }
+                    break;
+                }
+            }
+        }
+
+        debug!("Hilog output: {} bytes", output.len());
+        Ok(String::from_utf8_lossy(&output).into_owned())
     }
 
     /// Stream hilog output continuously with a callback
@@ -1055,29 +1175,39 @@ impl HdcClient {
         let result = async {
             self.send_command(&cmd).await?;
 
-            // Stream logs continuously
-            loop {
-                match timeout(Duration::from_secs(30), self.read_response()).await {
-                    Ok(Ok(data)) if data.is_empty() => continue,
-                    Ok(Ok(data)) => {
-                        let response = String::from_utf8(data)?;
+            let mut decoder = Utf8StreamDecoder::default();
+            let mut stopped_by_callback = false;
 
-                        // Call user callback with log chunk
-                        if !callback(&response) {
+            // Stream logs continuously.
+            loop {
+                match timeout(Duration::from_secs(30), self.read_response_frame()).await {
+                    Ok(Ok(ResponseFrame::ChannelClose)) => break,
+                    Ok(Ok(ResponseFrame::Data(data))) if data.is_empty() => continue,
+                    Ok(Ok(ResponseFrame::Data(data))) => {
+                        if !decoder.push(&data, &mut callback) {
                             info!("Hilog stream stopped by callback");
+                            stopped_by_callback = true;
                             break;
                         }
                     }
                     Ok(Err(HdcError::ConnectionClosed)) => break,
-                    Ok(Err(e)) => {
-                        warn!("Error reading hilog stream: {:?}", e);
-                        return Err(e);
+                    Ok(Err(error)) => {
+                        warn!("Error reading hilog stream: {:?}", error);
+                        return Err(error);
                     }
                     Err(_) => {
                         warn!("Timeout reading hilog stream");
                         break;
                     }
                 }
+            }
+
+            // A callback stop is terminal: flushing here would invoke it a
+            // second time with bytes that were already part of the stopped
+            // packet.  EOF/channel close/timeout still flushes one incomplete
+            // trailing code point using replacement semantics.
+            if !stopped_by_callback {
+                let _ = decoder.finish(&mut callback);
             }
 
             Ok(())
@@ -1412,6 +1542,11 @@ impl Drop for HdcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant as StdInstant;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+    use tokio::time::sleep;
 
     #[test]
     fn test_client_creation() {
@@ -1452,5 +1587,239 @@ mod tests {
             decode_response_frame(vec![14, 0, b'o', b'k']),
             ResponseFrame::Data(vec![14, 0, b'o', b'k'])
         );
+    }
+
+    #[test]
+    fn utf8_decoder_handles_split_multibyte_and_bad_byte_suffix() {
+        let mut decoder = Utf8StreamDecoder::default();
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let chunks_for_callback = Arc::clone(&chunks);
+        let mut callback = move |chunk: &str| {
+            chunks_for_callback.lock().unwrap().push(chunk.to_string());
+            true
+        };
+
+        assert!(decoder.push(&[0xe4, 0xb8], &mut callback));
+        assert!(
+            chunks.lock().unwrap().is_empty(),
+            "incomplete code point must be retained"
+        );
+        assert!(decoder.push(&[0xad], &mut callback));
+        assert!(decoder.push(&[0xff, b't', b'a', b'i', b'l'], &mut callback));
+
+        assert_eq!(*chunks.lock().unwrap(), vec!["中", "�", "tail"]);
+    }
+
+    #[test]
+    fn utf8_decoder_flushes_incomplete_eof_tail_once() {
+        let mut decoder = Utf8StreamDecoder::default();
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let chunks_for_callback = Arc::clone(&chunks);
+        let mut callback = move |chunk: &str| {
+            chunks_for_callback.lock().unwrap().push(chunk.to_string());
+            true
+        };
+
+        assert!(decoder.push(&[0xe4], &mut callback));
+        assert!(chunks.lock().unwrap().is_empty());
+        assert!(decoder.finish(&mut callback));
+        assert_eq!(*chunks.lock().unwrap(), vec!["�"]);
+        assert!(decoder.finish(&mut callback));
+        assert_eq!(
+            *chunks.lock().unwrap(),
+            vec!["�"],
+            "EOF tail must not be flushed twice"
+        );
+    }
+
+    #[test]
+    fn utf8_decoder_stops_after_first_false_callback() {
+        let mut decoder = Utf8StreamDecoder::default();
+        let calls = Arc::new(Mutex::new(0usize));
+        let calls_for_callback = Arc::clone(&calls);
+        let mut callback = move |_chunk: &str| {
+            let mut calls = calls_for_callback.lock().unwrap();
+            *calls += 1;
+            false
+        };
+
+        assert!(!decoder.push(b"first", &mut callback));
+        assert_eq!(*calls.lock().unwrap(), 1);
+        // The caller must skip `finish` after a false return.  This direct
+        // check ensures the decoder itself emits only one callback per stop.
+    }
+
+    async fn mock_hilog_connection(listener: TcpListener, frames: Vec<Vec<u8>>) {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut codec = PacketCodec::new();
+
+        let mut handshake = ChannelHandShake::default();
+        handshake.banner[..8].copy_from_slice(b"OHOS HDC");
+        handshake.set_channel_id(1);
+        codec
+            .write_packet(&mut stream, &handshake.to_bytes_without_version())
+            .await
+            .unwrap();
+        codec.read_packet(&mut stream).await.unwrap();
+        let command = codec.read_packet(&mut stream).await.unwrap();
+        assert!(String::from_utf8_lossy(&command).starts_with("hilog"));
+
+        for frame in frames {
+            if codec.write_packet(&mut stream, &frame).await.is_err() {
+                break;
+            }
+        }
+    }
+
+    async fn start_mock_hilog(frames: Vec<Vec<u8>>) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(mock_hilog_connection(listener, frames));
+        (address, server)
+    }
+
+    #[tokio::test]
+    async fn hilog_stream_callback_false_is_invoked_exactly_once() {
+        let (address, server) = start_mock_hilog(vec![
+            b"first".to_vec(),
+            b"must-not-be-delivered".to_vec(),
+            vec![2, 0, b'c', b'l', b'o', b's', b'e'],
+        ])
+        .await;
+        let mut client = HdcClient::connect(address).await.unwrap();
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let calls_for_callback = Arc::clone(&calls);
+
+        client
+            .hilog_stream(None, move |chunk| {
+                calls_for_callback.lock().unwrap().push(chunk.to_string());
+                false
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(*calls.lock().unwrap(), vec!["first"]);
+        assert!(!client.is_connected());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn hilog_stream_decodes_utf8_across_frames_and_flushes_eof_tail() {
+        let (address, server) = start_mock_hilog(vec![
+            vec![0xe4, 0xb8],
+            vec![0xad],
+            vec![0xff, b't', b'a', b'i', b'l'],
+            vec![0xe4],
+            vec![2, 0, b'c', b'l', b'o', b's', b'e'],
+        ])
+        .await;
+        let mut client = HdcClient::connect(address).await.unwrap();
+        let output = Arc::new(Mutex::new(String::new()));
+        let output_for_callback = Arc::clone(&output);
+
+        client
+            .hilog_stream(None, move |chunk| {
+                output_for_callback.lock().unwrap().push_str(chunk);
+                true
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(*output.lock().unwrap(), "中�tail�");
+        assert!(!client.is_connected());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn hilog_capture_drops_half_frame_after_timeout_without_desync() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut codec = PacketCodec::new();
+            let mut handshake = ChannelHandShake::default();
+            handshake.banner[..8].copy_from_slice(b"OHOS HDC");
+            handshake.set_channel_id(1);
+            codec
+                .write_packet(&mut stream, &handshake.to_bytes_without_version())
+                .await
+                .unwrap();
+            codec.read_packet(&mut stream).await.unwrap();
+            codec.read_packet(&mut stream).await.unwrap();
+
+            let first = codec.encode(b"first").unwrap();
+            let second = codec.encode(b"second").unwrap();
+            // Deliver one complete payload, then a header and one body byte
+            // of the next frame.  The remainder arrives beyond the quiet
+            // timeout, so the client must return the complete first payload
+            // and discard this channel instead of trying to read again in the
+            // middle of the second frame.
+            stream.write_all(&first).await.unwrap();
+            stream.write_all(&second[..5]).await.unwrap();
+            sleep(Duration::from_millis(150)).await;
+            let _ = stream.write_all(&second[5..]).await;
+        });
+
+        let mut client = HdcClient::connect(address).await.unwrap();
+        let result = client
+            .hilog_capture("hilog", Duration::from_secs(1), Duration::from_millis(100))
+            .await;
+        client.invalidate_connection();
+        assert!(
+            matches!(&result, Ok(_)),
+            "unexpected half-frame result: {result:?}"
+        );
+        assert_eq!(result.as_ref().unwrap(), "first");
+        assert!(!client.is_connected());
+        assert!(matches!(
+            client.read_response().await,
+            Err(HdcError::NotConnected)
+        ));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn hilog_capture_deadline_handles_continuous_empty_frames() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut codec = PacketCodec::new();
+            let mut handshake = ChannelHandShake::default();
+            handshake.banner[..8].copy_from_slice(b"OHOS HDC");
+            handshake.set_channel_id(1);
+            codec
+                .write_packet(&mut stream, &handshake.to_bytes_without_version())
+                .await
+                .unwrap();
+            codec.read_packet(&mut stream).await.unwrap();
+            codec.read_packet(&mut stream).await.unwrap();
+
+            loop {
+                if codec.write_packet(&mut stream, &[]).await.is_err() {
+                    break;
+                }
+                sleep(Duration::from_millis(1)).await;
+            }
+        });
+
+        let mut client = HdcClient::connect(address).await.unwrap();
+        let started = StdInstant::now();
+        let result = client
+            .hilog_capture(
+                "hilog",
+                Duration::from_millis(60),
+                Duration::from_millis(10),
+            )
+            .await;
+        let elapsed = started.elapsed();
+        client.invalidate_connection();
+
+        assert!(matches!(result, Err(HdcError::Timeout)));
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "capture deadline was ignored"
+        );
+        server.await.unwrap();
     }
 }

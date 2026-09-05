@@ -401,6 +401,10 @@ impl HdcClient {
 
     /// Get device logs (hilog) with buffering
     ///
+    /// Captures for at most two seconds, ending earlier after 500 ms without a
+    /// complete packet once output has arrived. The channel closes on return.
+    /// Use [`Self::hilog_stream`] for continuous output.
+    ///
     /// # Example
     ///
     /// ```no_run

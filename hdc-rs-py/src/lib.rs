@@ -460,6 +460,10 @@ impl HdcClient {
 
     /// Get device logs (hilog)
     ///
+    /// Captures for at most two seconds, ending earlier after 500 ms without a
+    /// complete packet once output has arrived. Closes the channel on return.
+    /// Use hilog_stream for continuous output.
+    ///
     /// Args:
     ///     args: Optional hilog arguments (e.g., "-t MyTag")
     ///
@@ -469,6 +473,7 @@ impl HdcClient {
     /// Example:
     ///     >>> logs = client.hilog()
     ///     >>> print(logs)
+    #[pyo3(signature = (args=None))]
     fn hilog(&mut self, args: Option<&str>) -> PyResult<String> {
         self.inner
             .hilog(args)

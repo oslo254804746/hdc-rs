@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/hdc-rs.svg)](https://crates.io/crates/hdc-rs)
 [![Documentation](https://docs.rs/hdc-rs/badge.svg)](https://docs.rs/hdc-rs)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
-[![Rust Version](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rust-1.71%2B-orange.svg)](https://www.rust-lang.org)
 [![Rust Validation](https://github.com/oslo254804746/hdc-rs/actions/workflows/rust-validation.yml/badge.svg?branch=master)](https://github.com/oslo254804746/hdc-rs/actions/workflows/rust-validation.yml)
 
 **Release:** 0.2.0 · **Status:** Beta
@@ -52,7 +52,7 @@ A pure Rust implementation of the **HarmonyOS Device Connector (HDC)** client li
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.71 or later
 - HDC server must be installed and running
 - A HarmonyOS/OpenHarmony device connected via USB or network
 
@@ -766,7 +766,7 @@ match client.shell("ls").await {
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.71 or later
 - HDC server installed (from HarmonyOS SDK or OpenHarmony)
 - A HarmonyOS/OpenHarmony device or emulator
 
@@ -1042,7 +1042,7 @@ You may choose either license for your use.
 
 ![Rust Validation](https://github.com/oslo254804746/hdc-rs/actions/workflows/rust-validation.yml/badge.svg?branch=master)
 ![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)
-![Rust Version](https://img.shields.io/badge/rust-1.70%2B-orange.svg)
+![Rust Version](https://img.shields.io/badge/rust-1.71%2B-orange.svg)
 
 **Version:** 0.2.0
 **Status:** Active Development

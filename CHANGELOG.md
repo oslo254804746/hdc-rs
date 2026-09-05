@@ -12,8 +12,16 @@
 
 ### Changed
 
-- Install and uninstall option/value pairs are encoded as one quoted HDC
-  argument; `-cwd` remains an option followed by a separate value argument.
+- Install option/value pairs are encoded as one quoted HDC argument; `-cwd`
+  remains an option followed by a separate value argument. Uninstall sends
+  its package selector as separate `-n` and package arguments.
+- Buffered Hilog captures for at most two seconds and ends earlier after a
+  500 ms packet timeout once output arrives. Streaming Hilog preserves UTF-8
+  across packets, replaces malformed bytes, and stops callbacks immediately
+  when they return false. Python `hilog()` defaults its arguments to `None`.
+- Installation allows up to 300 seconds between response frames.
+- Corrected the documented minimum supported Rust version to 1.71, matching
+  the dependency graph, and added an MSRV check to CI.
 - Covered terminal/streaming task commands use a frame-aware channel drain that
   recognizes `KernelChannelClose`; raw shell output uses a multi-frame EOF drain
   so binary prefixes are preserved. These covered terminal/streaming paths
@@ -25,6 +33,12 @@
 
 - Device-dependent integration tests remain ignored by default. Running them
   requires an HDC server and a connected HarmonyOS/OpenHarmony device.
+- Added offline Hilog and application protocol regressions and an installed
+  Python wheel regression script. Device acceptance requires an explicit
+  device ID; application lifecycle tests also require explicit opt-in and a
+  disposable package that is not already installed. See the
+  [validation review](docs/v0.2.0-validation-review.md) for actual test results
+  and the remaining hardware acceptance requirements.
 
 ### Deferred / Not included
 

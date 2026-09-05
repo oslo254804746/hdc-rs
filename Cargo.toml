@@ -9,7 +9,7 @@ members = [
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.71"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/oslo254804746/hdc-rs"
 homepage = "https://github.com/oslo254804746/hdc-rs"

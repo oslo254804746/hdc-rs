@@ -12,6 +12,26 @@ permissions:
   contents: read
 
 jobs:
+  msrv:
+    name: Rust 1.71 MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.71
+        uses: dtolnay/rust-toolchain@1.71.0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check workspace at MSRV
+        env:
+          PYO3_PYTHON: python
+        run: cargo check --workspace --all-targets --all-features --locked
+
   rust:
     name: fmt, test, clippy
     runs-on: ubuntu-latest

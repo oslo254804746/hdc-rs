@@ -43,9 +43,15 @@ device, so CI results do not claim hardware validation.
 | `update`, `flash`, `erase`, `format` | Not exposed | Not exposed | Not exposed | Not covered | Yes | Conditional |
 | `alive`, `spawn-sub`, `killall-sub` | Not exposed | Not exposed | Not exposed | Not covered | No | Low |
 
-Device-dependent integration tests are ignored by default. Run them explicitly with:
+Run the local regression suite without a device:
 
 ```sh
-cargo test --test integration_test -- --ignored
-cargo test --test forward_app_test -- --ignored
+cargo test --workspace --all-features
 ```
+
+Device acceptance tests live in `hdc-rs/tests/real_device_test.rs` and are ignored
+by default. Configure an explicit device and run selected cases serially. See
+[the v0.2.0 review and validation notes](v0.2.0-validation-review.md) for scope,
+prerequisites, and the distinction between offline and device evidence.
+The legacy Rust files in the workspace root `tests/` directory are not Cargo
+test targets because the root manifest is a virtual workspace.
